@@ -1,15 +1,41 @@
+import string
 import secrets
 import streamlit as st
 import hashlib
 import requests
 from zxcvbn import zxcvbn
 
-def generer_passphrase(nb_mots=4):
-    # Une liste de mots simples, mais on pourrait en mettre des milliers
-    dictionnaire = ["Ciel", "Robot", "Café", "Lumiere", "Forêt", "Code", "Vitesse", "Expert", "Silence", "Pluie", "Lune", "Cactus", "Zenith", "Boussole", "Pixel"]
-    # Choix cryptographiquement sûr de 4 mots
+def generer_passphrase_complexe(nb_mots=4):
+    dictionnaire = ["abricot", "amiral", "banquise", "boussole", "cactus", "caillou", "calcaire", "camion", 
+        "canard", "capsule", "carton", "cascade", "ceinture", "cerise", "charbon", "clavier", 
+        "cloche", "colline", "cristal", "cuisine", "dauphin", "dentelle", "desert", "disque", 
+        "domino", "echarpe", "eclair", "ecureuil", "aimant", "enigme", "epaule", "espace", 
+        "etoile", "falaise", "fantome", "farine", "flamme", "fleuve", "foret", "fraise", 
+        "gant", "girafe", "glacier", "guitare", "hamac", "harpe", "herisson", "hibou", 
+        "horizon", "horloge", "image", "insecte", "ivoire", "jardin", "jungle", "kangourou", 
+        "labyrinthe", "lampe", "lecture", "lezard", "lion", "locomotive", "lumiere", "lune", 
+        "mairie", "manchot", "marmotte", "miroir", "montagne", "moustique", "navire", "nuage", 
+        "oiseau", "orange", "orchidee", "ouragan", "papillon", "parapluie", "pastèque", "pelle", 
+        "phare", "piano", "pilote", "pinceau", "planete", "plateau", "poisson", "polaire", 
+        "prairie", "quartz", "radar", "radeau", "raisin", "renard", "requin", "rideau", 
+        "robot", "rocher", "ruisseau", "sable", "saison", "sapin", "satellite", "sauvage", 
+        "scooter", "serpent", "silence", "soleil", "sommet", "source", "spectacle", "sphère", 
+        "tambour", "tempête", "theâtre", "tigre", "tomate", "torche", "toupie", "tunnel", 
+        "univers", "ustensile", "valise", "vampire", "vitesse", "volcan", "wagon", "xylophone", "zebre", "zenith"] # (Utilise ta liste complète ici)
+    
+    # 1. Sélection des mots
     mots = [secrets.choice(dictionnaire) for _ in range(nb_mots)]
-    return "-".join(mots)
+    
+    # 2. Ajout de la complexité (Chiffre et Symbole)
+    chiffre = secrets.choice(string.digits)     # Choisit un chiffre entre 0 et 9
+    symbole = secrets.choice("!@#$%&*?")        # Choisit un symbole fort
+    
+    # On remplace un séparateur par un symbole et on colle le chiffre à un mot
+    passphrase = "-".join(mots)
+    passphrase = passphrase.replace("-", symbole, 1) # Remplace le 1er tiret par le symbole
+    passphrase += chiffre                            # Ajoute le chiffre à la fin
+    
+    return passphrase
 
 # Configuration de la page
 st.set_page_config(page_title="CyberBrain Audit", page_icon="🛡")
