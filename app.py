@@ -86,6 +86,6 @@ if mdp:
     if score == 0:
         st.divider() # Ajoute une ligne de séparation propre
         st.warning("⚠️ Alerte de vulnérabilité critique")
-        nouvelle_pass = generer_passphrase()
+        nouvelle_pass = generer_passphrase_complexe()
         st.write(f"**Alternative sécurisée recommandée :** `{nouvelle_pass}`")
         st.caption("Cette passphrase est composée de mots aléatoires. Elle est plus longue, plus sûre et plus facile à mémoriser.")
