@@ -126,5 +126,5 @@ if mdp:
         st.warning("⚠️ Alerte de vulnérabilité critique")
         nouvelle_pass = generer_passphrase()
         st.write(f"**Alternative sécurisée recommandée :** `{nouvelle_pass}`")
-        st.caption("Cette passphrase est composée de mots aléatoires. Elle est plus longue, plus sûre et plus facile à mémoriser.")gestions']:
+        st.caption("Cette passphrase est composée de mots aléatoires. Elle est plus longue, plus sûre et plus facile à mémoriser.")
             st.info(f"Conseil : {s}")
