@@ -12,11 +12,20 @@ def generer_passphrase_complexe(nb_mots=4):
     
     if os.path.exists(chemin_fichier):
         with open(chemin_fichier, "r", encoding="utf-8") as f:
-            # On crée la liste en filtrant les lignes vides et les espaces
-            dictionnaire = [ligne.strip() for ligne in f.readlines() if ligne.strip()]
+            dictionnaire = []
+            for ligne in f:
+                # Analyse de ligne : on sépare par les espaces/tabulations
+                parties = ligne.split()
+                if len(parties) >= 2:
+                    # Si la ligne est "25166 emission", on ne prend que "emission"
+                    # En général, dans Diceware, le mot est le DEUXIÈME élément
+                    mot = parties[1].strip()
+                    dictionnaire.append(mot)
+                elif len(parties) == 1:
+                    # Si la ligne n'a que le mot
+                    dictionnaire.append(parties[0].strip())
     else:
-        # Solution de secours (fail-safe) si le fichier est manquant
-        dictionnaire = ["cyber", "securite", "expert", "code", "audit", "protection"]
+        dictionnaire = ["cyber", "securite", "expert", "code"]
 
     # 1. Sélection cryptographique parmi les 7 776 mots
     mots = [secrets.choice(dictionnaire) for _ in range(nb_mots)]
