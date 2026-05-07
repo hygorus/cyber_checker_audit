@@ -1,94 +1,125 @@
-import string
-import secrets
 import streamlit as st
 import hashlib
 import requests
-from zxcvbn import zxcvbn
+import zxcvbn
+import secrets
+import string
 import os
 
-def generer_passphrase_complexe(nb_mots=4):
-    # Procédure de lecture sécurisée du fichier
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="CyberBrain Auditor", page_icon="🛡️")
+
+# --- MOTEURS DE GÉNÉRATION (PHASE 4 AMÉLIORÉE) ---
+
+def generer_passphrase_diceware(nb_mots=4):
+    """Génère une passphrase narrative avec séparateurs variés et majuscules."""
     chemin_fichier = "diceware-fr.txt"
-    
     if os.path.exists(chemin_fichier):
         with open(chemin_fichier, "r", encoding="utf-8") as f:
+            # Nettoyage intelligent : on ignore l'index numérique si présent
             dictionnaire = []
             for ligne in f:
-                # Analyse de ligne : on sépare par les espaces/tabulations
                 parties = ligne.split()
                 if len(parties) >= 2:
-                    # Si la ligne est "25166 emission", on ne prend que "emission"
-                    # En général, dans Diceware, le mot est le DEUXIÈME élément
-                    mot = parties[1].strip()
-                    dictionnaire.append(mot)
+                    dictionnaire.append(parties[1].strip())
                 elif len(parties) == 1:
-                    # Si la ligne n'a que le mot
                     dictionnaire.append(parties[0].strip())
     else:
-        dictionnaire = ["cyber", "securite", "expert", "code"]
+        # Secours si le fichier est absent
+        dictionnaire = ["cyber", "securite", "expert", "reseau", "code", "sentinel"]
 
-    # 1. Sélection cryptographique parmi les 7 776 mots
     mots = [secrets.choice(dictionnaire) for _ in range(nb_mots)]
+    separateurs = [".", ",", ";", ":", "!", "?", "£", "$"]
     
-    # 2. Injection de complexité (Chiffre et Symbole)
-    chiffre = secrets.choice(string.digits)
-    symbole = secrets.choice("!@#$%&*?")
+    phrase = ""
+    for i, mot in enumerate(mots):
+        # Majuscule aléatoire pour le style "Phrase"
+        mot_formatte = mot.capitalize() if secrets.choice([True, False]) else mot
+        phrase += mot_formatte
+        if i < len(mots) - 1:
+            phrase += secrets.choice(separateurs)
+            
+    return phrase + secrets.choice(string.digits)
+
+def generer_mdp_complexe(longueur=16):
+    """Génère une chaîne purement aléatoire de haute densité."""
+    caracteres = string.ascii_letters + string.digits + "!@#$%^&*()_+-=[]{}|"
+    return ''.join(secrets.choice(caracteres) for _ in range(longueur))
+
+# --- FONCTIONS D'AUDIT (MOTEUR CENTRAL) ---
+
+def verifier_fuites(password):
+    sha1_password = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
+    prefixe, suffixe = sha1_password[:5], sha1_password[5:]
+    url = f"https://api.pwnedpasswords.com/range/{prefixe}"
     
-    passphrase = "-".join(mots)
-    passphrase = passphrase.replace("-", symbole, 1)
-    passphrase += chiffre
-    
-    return passphrase
+    try:
+        reponse = requests.get(url)
+        if reponse.status_code == 200:
+            lignes = reponse.text.splitlines()
+            for ligne in lignes:
+                h, count = ligne.split(':')
+                if h == suffixe:
+                    return int(count)
+        return 0
+    except:
+        return -1
 
-# Configuration de la page
-st.set_page_config(page_title="CyberBrain Audit", page_icon="🛡")
+# --- INTERFACE UTILISATEUR ---
 
-st.title("🛡 CyberBrain : Auditeur de Sécurité")
-st.write("Vérifiez la robustesse et l'intégrité de vos mots de passe.")
+st.title("🛡️ CyberBrain : Auditeur de Sécurité")
+st.write("Vérifiez la robustesse et l'intégrité de vos accès en temps réel.")
 
-# Champ de saisie
 mdp = st.text_input("Entrez le mot de passe à tester :", type="password")
 
 if mdp:
-    # 1. Analyse de complexité
-    res = zxcvbn(mdp)
+    # 1. Analyse de robustesse
+    res = zxcvbn.zxcvbn(mdp)
     score = res['score']
+    # Correction de la coupure de ligne pour le temps de crack
+    temps_crack = res['crack_times_display']['offline_fast_hashing_1e10_per_second']
     
-    # 2. Analyse de brèches (on réutilise ta logique SHA-1)
-    sha1 = hashlib.sha1(mdp.encode('utf-8')).hexdigest().upper()
-    prefixe, suffixe = sha1[:5], sha1[5:]
-    reponse = requests.get(f"https://api.pwnedpasswords.com/range/{prefixe}")
+    # 2. Vérification des fuites
+    fuites = verifier_fuites(mdp)
     
-    fuites = 0
-    for ligne in reponse.text.splitlines():
-        h, count = ligne.split(':')
-        if h == suffixe:
-            fuites = int(count)
-            break
-
-    # --- AFFICHAGE DES RÉSULTATS ---
+    # 3. Affichage des métriques
     col1, col2 = st.columns(2)
-    
     with col1:
         st.metric("Score de Robustesse", f"{score}/4")
         st.progress(score * 25)
         
     with col2:
         if fuites > 0:
-            st.error(f"⚠️ Trouvé dans {fuites} brèches !")
-        else:
+            st.error(f"⚠️ Trouvé dans {fuites:,} brèches !")
+        elif fuites == 0:
             st.success("✅ Aucune fuite détectée.")
+        else:
+            st.warning("Connexion API impossible.")
 
     st.subheader("Analyse détaillée")
-    st.write(f"**Temps estimé pour craquer :** {res['crack_times_display']['offline_fast_hashing_1e10_per_second']}")
+    st.write(f"**Temps estimé pour craquer :** {temps_crack}")
     
     if res['feedback']['suggestions']:
         for s in res['feedback']['suggestions']:
             st.info(f"Conseil : {s}")
-    # --- AJOUT DE LA PHASE 4 : REMÉDIATION ---
-    if score == 0:
-        st.divider() # Ajoute une ligne de séparation propre
-        st.warning("⚠️ Alerte de vulnérabilité critique")
-        nouvelle_pass = generer_passphrase_complexe()
-        st.write(f"**Alternative sécurisée recommandée :** `{nouvelle_pass}`")
-        st.caption("Cette passphrase est composée de mots aléatoires. Elle est plus longue, plus sûre et plus facile à mémoriser.")
+
+    # --- PHASE 4 : REMÉDIATION ET GÉNÉRATION ---
+    if score <= 1:
+        st.divider()
+        st.warning("🚨 Votre mot de passe actuel est trop vulnérable.")
+        
+        st.subheader("Générateur de remplacement sécurisé")
+        choix = st.radio(
+            "Quelle stratégie préférez-vous ?",
+            ("Passphrase Narrative (Mémorisable)", "Code Aléatoire (Gestionnaire)")
+        )
+        
+        if choix == "Passphrase Narrative (Mémorisable)":
+            nouveau = generer_passphrase_diceware()
+            st.write("**Suggestion (Style Phrase) :**")
+        else:
+            nouveau = generer_mdp_complexe()
+            st.write("**Suggestion (Haute Densité) :**")
+            
+        st.code(nouveau, language="bash")
+        st.caption("Copiez ce secret et enregistrez-le dans un endroit sûr.")
