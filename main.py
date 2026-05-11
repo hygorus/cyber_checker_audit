@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security.api_key import APIKeyHeader
 import hashlib
 import requests
 import zxcvbn
@@ -6,52 +7,56 @@ import secrets
 import string
 import os
 
-app = FastAPI(title="CyberBrain API", description="API d'audit et de génération de secrets")
+# --- CONFIGURATION DE SÉCURITÉ ---
+# C'est ici que tu définis ta clé secrète. 
+# En production, on utilise normalement des variables d'environnement.
+API_KEY = "CYBER-YVES-2026-SECRET-KEY" 
+API_KEY_NAME = "X-API-KEY"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# --- MOTEURS DE GÉNÉRATION ---
+app = FastAPI(title="CyberBrain API Secure")
 
+# Fonction de vérification de la clé
+async def get_api_key(header_key: str = Depends(api_key_header)):
+    if header_key == API_KEY:
+        return header_key
+    raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
+
+# --- MOTEURS DE GÉNÉRATION (Inchangés) ---
 def get_diceware_word(langue="Français"):
     nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
     if os.path.exists(nom_fichier):
         with open(nom_fichier, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            # On extrait le mot (deuxième colonne)
-            dictionnaire = [l.split()[1] for l in lines if len(l.split()) > 1]
+            dictionnaire = [l.split()[1] for l in f.readlines() if len(l.split()) > 1]
             return secrets.choice(dictionnaire)
-    return "cyber" # Secours
+    return "cyber"
 
 def generer_hybride(langue="Français"):
-    mots = [get_diceware_word(langue).capitalize() if secrets.choice([True, False]) 
-            else get_diceware_word(langue) for _ in range(4)]
+    mots = [get_diceware_word(langue).capitalize() if secrets.choice([True, False]) else get_diceware_word(langue) for _ in range(4)]
     separateurs = [".", ",", ";", ":", "!", "?", "£", "$"]
-    phrase = ""
-    for i, mot in enumerate(mots):
-        phrase += mot
-        if i < 3: phrase += secrets.choice(separateurs)
+    phrase = "".join([m + (secrets.choice(separateurs) if i < 3 else "") for i, m in enumerate(mots)])
     return phrase + secrets.choice(string.digits)
 
-# --- FONCTIONS D'AUDIT ---
+# --- POINT D'ENTRÉE SÉCURISÉ ---
 
-def check_pwned(password):
-    sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
+@app.get("/audit")
+def audit_password(pwd: str, lang: str = "Français", token: str = Depends(get_api_key)):
+    """
+    Cette fonction nécessite désormais un token valide pour répondre.
+    """
+    analysis = zxcvbn.zxcvbn(pwd)
+    score = analysis['score']
+    
+    # Audit HIBP
+    sha1 = hashlib.sha1(pwd.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
+    leaks = 0
     res = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}")
     if res.status_code == 200:
         for line in res.text.splitlines():
             h, count = line.split(':')
-            if h == suffix: return int(count)
-    return 0
+            if h == suffix: leaks = int(count)
 
-# --- POINTS D'ENTRÉE (ENDPOINTS) ---
-
-@app.get("/audit")
-def audit_password(pwd: str, lang: str = "Français"):
-    # 1. Analyse
-    analysis = zxcvbn.zxcvbn(pwd)
-    score = analysis['score']
-    leaks = check_pwned(pwd)
-    
-    # 2. Génération de recommandation si score <= 3
     suggestion = None
     if score <= 3:
         suggestion = {
@@ -60,9 +65,8 @@ def audit_password(pwd: str, lang: str = "Français"):
         }
 
     return {
-        "status": "danger" if score <= 1 or leaks > 0 else "warning" if score <= 3 else "secure",
+        "status": "secure" if score > 3 and leaks == 0 else "warning",
         "score": score,
         "pwned_leaks": leaks,
-        "crack_time": analysis['crack_times_display']['offline_fast_hashing_1e10_per_second'],
         "recommendation": suggestion
     }
