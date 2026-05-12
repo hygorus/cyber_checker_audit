@@ -1,4 +1,5 @@
-import streamlit as st
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security.api_key import APIKeyHeader
 import hashlib
 import requests
 import zxcvbn
@@ -6,99 +7,77 @@ import secrets
 import string
 import os
 
-# --- CONFIGURATION DE LA PAGE ---
-st.set_page_config(page_title="CyberBrain Auditor", page_icon="🛡️")
+# --- CONFIGURATION MULTI-CLIENTS ---
+API_KEY_NAME = "X-API-KEY"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# --- MOTEURS DE GÉNÉRATION AMÉLIORÉS ---
+def get_authorized_keys():
+    """
+    Récupère la liste des clés depuis les variables d'environnement.
+    Format attendu : "CLE_CLIENT_A,CLE_CLIENT_B,CLE_CLIENT_C"
+    """
+    # On récupère la chaîne de caractères, sinon une chaîne vide par défaut
+    keys_raw = os.getenv("ALLOWED_API_KEYS", "")
+    # On transforme la chaîne en liste en coupant au niveau des virgules
+    return [k.strip() for k in keys_raw.split(",") if k.strip()]
 
-def generer_passphrase_diceware(langue="Français", nb_mots=4):
-    """Génère une passphrase basée sur la langue choisie."""
-    # Sélection du fichier selon la langue
-    nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
+async def verify_api_key(header_key: str = Depends(api_key_header)):
+    authorized_keys = get_authorized_keys()
     
+    if header_key in authorized_keys:
+        return header_key
+    
+    raise HTTPException(
+        status_code=403, 
+        detail="Accès refusé : Clé API invalide, révoquée ou manquante."
+    )
+
+app = FastAPI(title="CyberBrain Multi-Client API")
+
+# --- MOTEURS DE GÉNÉRATION (Inchangés pour la cohérence) ---
+def get_diceware_word(langue="Français"):
+    nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
     if os.path.exists(nom_fichier):
         with open(nom_fichier, "r", encoding="utf-8") as f:
-            dictionnaire = [ligne.split()[1] if len(ligne.split()) > 1 else ligne.strip() 
-                           for ligne in f if ligne.strip()]
-    else:
-        # Secours si le fichier est absent
-        dictionnaire = ["security", "vault", "shield", "cyber"] if langue == "Anglais" else ["securite", "coffre", "bouclier", "cyber"]
+            dictionnaire = [l.split()[1] for l in f.readlines() if len(l.split()) > 1]
+            return secrets.choice(dictionnaire)
+    return "cyber"
 
-    mots = [secrets.choice(dictionnaire) for _ in range(nb_mots)]
+def generer_hybride(langue="Français"):
+    mots = [get_diceware_word(langue).capitalize() if secrets.choice([True, False]) else get_diceware_word(langue) for _ in range(4)]
     separateurs = [".", ",", ";", ":", "!", "?", "£", "$"]
-    
-    phrase = ""
-    for i, mot in enumerate(mots):
-        mot_formatte = mot.capitalize() if secrets.choice([True, False]) else mot
-        phrase += mot_formatte
-        if i < len(mots) - 1:
-            phrase += secrets.choice(separateurs)
-            
+    phrase = "".join([m + (secrets.choice(separateurs) if i < 3 else "") for i, m in enumerate(mots)])
     return phrase + secrets.choice(string.digits)
 
-def generer_mdp_complexe(longueur=16):
-    caracteres = string.ascii_letters + string.digits + "!@#$%^&*()_+-=[]{}|"
-    return ''.join(secrets.choice(caracteres) for _ in range(longueur))
+# --- POINT D'ENTRÉE SÉCURISÉ ---
 
-# --- FONCTION D'AUDIT API ---
-
-def verifier_fuites(password):
-    sha1_password = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
-    prefixe, suffixe = sha1_password[:5], sha1_password[5:]
-    url = f"https://api.pwnedpasswords.com/range/{prefixe}"
+@app.get("/audit")
+def audit_password(pwd: str, lang: str = "Français", token: str = Depends(verify_api_key)):
+    analysis = zxcvbn.zxcvbn(pwd)
+    score = analysis['score']
+    
+    # Audit HIBP
+    sha1 = hashlib.sha1(pwd.encode('utf-8')).hexdigest().upper()
+    prefix, suffix = sha1[:5], sha1[5:]
+    leaks = 0
     try:
-        reponse = requests.get(url)
-        if reponse.status_code == 200:
-            lignes = reponse.text.splitlines()
-            for ligne in lignes:
-                h, count = ligne.split(':')
-                if h == suffixe: return int(count)
-        return 0
-    except: return -1
+        res = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}", timeout=5)
+        if res.status_code == 200:
+            for line in res.text.splitlines():
+                h, count = line.split(':')
+                if h == suffix: leaks = int(count)
+    except: pass
 
-# --- INTERFACE UTILISATEUR ---
-
-st.title("🛡️ CyberBrain : Auditeur de Sécurité")
-
-# Choix de la langue de l'interface et du générateur
-langue_interface = st.sidebar.selectbox("Langue / Language", ("Français", "Anglais"))
-
-label_input = "Entrez le mot de passe à tester :" if langue_interface == "Français" else "Enter the password to test:"
-mdp = st.text_input(label_input, type="password")
-
-if mdp:
-    res = zxcvbn.zxcvbn(mdp)
-    score = res['score']
-    temps_crack = res['crack_times_display']['offline_fast_hashing_1e10_per_second']
-    fuites = verifier_fuites(mdp)
-    
-    # Affichage des métriques
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Score", f"{score}/4")
-        st.progress(score * 25)
-    with col2:
-        if fuites > 0: st.error(f"⚠️ {fuites:,} brèches !")
-        elif fuites == 0: st.success("✅ Sécurisé")
-    
-    st.write(f"**Estimation de craquage :** {temps_crack}")
-
-    # --- NOUVEAU SEUIL DE SÉCURITÉ (Score <= 3) ---
+    suggestion = None
     if score <= 3:
-        st.divider()
-        msg_alerte = "🚨 Amélioration recommandée pour une sécurité maximale." if langue_interface == "Français" else "🚨 Improvement recommended for maximum security."
-        st.warning(msg_alerte)
-        
-        # Options de génération
-        choix = st.radio(
-            "Type de remplacement :" if langue_interface == "Français" else "Replacement type:",
-            ("Passphrase Narrative", "Code Aléatoire / Random Code")
-        )
-        
-        if "Passphrase" in choix:
-            # On utilise la langue choisie dans la barre latérale pour le Diceware
-            nouveau = generer_passphrase_diceware(langue=langue_interface)
-        else:
-            nouveau = generer_mdp_complexe()
-            
-        st.code(nouveau, language="bash")
+        suggestion = {
+            "passphrase_narrative": generer_hybride(lang),
+            "random_code": ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
+        }
+
+    return {
+        "score": score,
+        "pwned_leaks": leaks,
+        "recommendation": suggestion,
+        "client_authenticated": True
+    }
