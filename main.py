@@ -17,10 +17,18 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 app = FastAPI(title="CyberBrain API Secure")
 
 # Fonction de vérification de la clé
-async def get_api_key(header_key: str = Depends(api_key_header)):
-    if header_key == API_KEY:
-        return header_key
-    raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
+async def verify_api_key(header_key: str = Depends(api_key_header)):
+    # On récupère la valeur brute de Render
+    raw_keys = os.getenv("ALLOWED_API_KEYS", "NON_DEFINIE")
+    authorized_keys = [k.strip() for k in raw_keys.split(",") if k.strip()]
+    
+    # Ce message nous dira exactement ce que le serveur "voit"
+    if header_key not in authorized_keys:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Refusé. Reçu: '{header_key}'. Liste détectée: {authorized_keys}"
+        )
+    return header_key
 
 # --- MOTEURS DE GÉNÉRATION (Inchangés) ---
 def get_diceware_word(langue="Français"):
