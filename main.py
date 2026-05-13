@@ -48,7 +48,7 @@ def generer_hybride(langue="Français"):
 # --- POINT D'ENTRÉE SÉCURISÉ ---
 
 @app.get("/audit")
-def audit_password(pwd: str, lang: str = "Français", token: str = Depends(get_api_key)):
+def audit_password(pwd: str, lang: str = "Français", token: str = Depends(verify_api_key)):
     """
     Cette fonction nécessite désormais un token valide pour répondre.
     """
