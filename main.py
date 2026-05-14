@@ -7,19 +7,11 @@ import secrets
 import hashlib
 import requests
 import zxcvbn
-import string
 import os
 
-# --- 1 & 2. CONFIGURATION RATE LIMIT & MASQUAGE ---
-# On limite à 5 requêtes par minute pour protéger l'instance gratuite
+# Configuration Sécurité
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(
-    title="CyberBrain API Secure Pro",
-    docs_url="/docs", 
-    redoc_url=None,
-    # Masquage partiel via les paramètres de l'application
-    openapi_url="/api/v1/openapi.json" 
-)
+app = FastAPI(title="CyberBrain API Secure Pro")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -30,37 +22,27 @@ def get_authorized_keys():
     keys_raw = os.getenv("ALLOWED_API_KEYS", "")
     return [k.strip() for k in keys_raw.split(",") if k.strip()]
 
-# --- 4. COMPARAISON EN TEMPS CONSTANT ---
 async def verify_api_key(header_key: str = Depends(api_key_header)):
     authorized_keys = get_authorized_keys()
-    
-    # On utilise secrets.compare_digest pour éviter les Timing Attacks
     is_valid = any(secrets.compare_digest(header_key or "", k) for k in authorized_keys)
-    
-    if is_valid:
-        return header_key
-    
-    raise HTTPException(status_code=403, detail="Accès refusé.")
+    if is_valid: return header_key
+    raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
 
-# --- MOTEURS DE GÉNÉRATION (Inchangés) ---
-def get_diceware_word(langue="Français"):
+# Fonction Diceware restaurée
+def get_diceware_phrase(langue="Français"):
+    # On génère une phrase de 3 mots pour la recommandation
+    mots = []
     nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
     if os.path.exists(nom_fichier):
         with open(nom_fichier, "r", encoding="utf-8") as f:
             dictionnaire = [l.split()[1] for l in f.readlines() if len(l.split()) > 1]
-            return secrets.choice(dictionnaire)
-    return "cyber"
+            for _ in range(3):
+                mots.append(secrets.choice(dictionnaire))
+    return "-".join(mots) if mots else "mot1-mot2-mot3"
 
-# --- 3. AUDIT AVEC LIMITATION DE TAILLE ---
 @app.get("/audit")
-@limiter.limit("5/minute") # Limitation de débit
-def audit_password(
-    request: Request, 
-    pwd: str, 
-    lang: str = "Français", 
-    token: str = Depends(verify_api_key)
-):
-    # Sécurité : Limitation de la taille pour éviter les DoS
+@limiter.limit("5/minute")
+def audit_password(request: Request, pwd: str, lang: str = "Français", token: str = Depends(verify_api_key)):
     if len(pwd) > 128:
         raise HTTPException(status_code=400, detail="Mot de passe trop long (max 128 car.)")
 
@@ -79,8 +61,13 @@ def audit_password(
                 if h == suffix: leaks = int(count)
     except: pass
 
+    # --- RETOUR COMPLET DES DONNÉES ---
     return {
+        "status": "secure" if score > 3 and leaks == 0 else "warning",
         "score": score,
         "pwned_leaks": leaks,
-        "status": "secure" if score > 3 and leaks == 0 else "warning"
+        "recommendation": {
+            "passphrase_suggestion": get_diceware_phrase(lang),
+            "random_token": secrets.token_urlsafe(12)
+        }
     }
