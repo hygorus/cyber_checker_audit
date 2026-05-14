@@ -8,6 +8,7 @@ import hashlib
 import requests
 import zxcvbn
 import os
+import string  # <-- AJOUTÉ : Nécessaire pour string.digits
 
 # Configuration Sécurité
 limiter = Limiter(key_func=get_remote_address)
@@ -28,7 +29,7 @@ async def verify_api_key(header_key: str = Depends(api_key_header)):
     if is_valid: return header_key
     raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
 
-# --- MOTEURS DE GÉNÉRATION (Inchangés pour la cohérence) ---
+# --- MOTEURS DE GÉNÉRATION CORRIGÉS ---
 def get_diceware_word(langue="Français"):
     nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
     if os.path.exists(nom_fichier):
@@ -38,6 +39,7 @@ def get_diceware_word(langue="Français"):
     return "cyber"
 
 def generer_hybride(langue="Français"):
+    # Génère une phrase complexe de 4 mots
     mots = [get_diceware_word(langue).capitalize() if secrets.choice([True, False]) else get_diceware_word(langue) for _ in range(4)]
     separateurs = [".", ",", ";", ":", "!", "?", "£", "$"]
     phrase = "".join([m + (secrets.choice(separateurs) if i < 3 else "") for i, m in enumerate(mots)])
@@ -52,7 +54,7 @@ def audit_password(request: Request, pwd: str, lang: str = "Français", token: s
     analysis = zxcvbn.zxcvbn(pwd)
     score = analysis['score']
     
-    # Audit HIBP
+    # Audit HIBP (Vérification des fuites)
     sha1 = hashlib.sha1(pwd.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     leaks = 0
@@ -64,13 +66,14 @@ def audit_password(request: Request, pwd: str, lang: str = "Français", token: s
                 if h == suffix: leaks = int(count)
     except: pass
 
-    # --- RETOUR COMPLET DES DONNÉES ---
+    # --- RETOUR DES DONNÉES (Noms de fonctions harmonisés) ---
     return {
         "status": "secure" if score > 3 and leaks == 0 else "warning",
         "score": score,
         "pwned_leaks": leaks,
         "recommendation": {
-            "passphrase_suggestion": get_diceware_phrase(lang),
+            # Appel de generer_hybride au lieu de la fonction inexistante
+            "passphrase_suggestion": generer_hybride(lang),
             "random_token": secrets.token_urlsafe(12)
         }
     }
