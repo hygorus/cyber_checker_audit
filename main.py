@@ -29,16 +29,13 @@ async def verify_api_key(header_key: str = Depends(api_key_header)):
     raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
 
 # Fonction Diceware restaurée
-def get_diceware_phrase(langue="Français"):
-    # On génère une phrase de 3 mots pour la recommandation
-    mots = []
+def get_diceware_word(langue="Français"):
     nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
     if os.path.exists(nom_fichier):
         with open(nom_fichier, "r", encoding="utf-8") as f:
             dictionnaire = [l.split()[1] for l in f.readlines() if len(l.split()) > 1]
-            for _ in range(3):
-                mots.append(secrets.choice(dictionnaire))
-    return "-".join(mots) if mots else "mot1-mot2-mot3"
+            return secrets.choice(dictionnaire)
+    return "cyber"
 
 @app.get("/audit")
 @limiter.limit("5/minute")
