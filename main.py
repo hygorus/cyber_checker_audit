@@ -28,7 +28,7 @@ async def verify_api_key(header_key: str = Depends(api_key_header)):
     if is_valid: return header_key
     raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
 
-# Fonction Diceware restaurée
+# --- MOTEURS DE GÉNÉRATION (Inchangés pour la cohérence) ---
 def get_diceware_word(langue="Français"):
     nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
     if os.path.exists(nom_fichier):
@@ -36,6 +36,12 @@ def get_diceware_word(langue="Français"):
             dictionnaire = [l.split()[1] for l in f.readlines() if len(l.split()) > 1]
             return secrets.choice(dictionnaire)
     return "cyber"
+
+def generer_hybride(langue="Français"):
+    mots = [get_diceware_word(langue).capitalize() if secrets.choice([True, False]) else get_diceware_word(langue) for _ in range(4)]
+    separateurs = [".", ",", ";", ":", "!", "?", "£", "$"]
+    phrase = "".join([m + (secrets.choice(separateurs) if i < 3 else "") for i, m in enumerate(mots)])
+    return phrase + secrets.choice(string.digits)
 
 @app.get("/audit")
 @limiter.limit("5/minute")
