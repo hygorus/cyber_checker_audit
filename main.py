@@ -78,48 +78,41 @@ def audit_password(request: Request, pwd: str, lang: str = "Français", token: s
         }
     }
 
-# --- NOUVELLE ROUTE : AUDIT EMAIL ---
+# --- ROUTE CORRIGÉE : AUDIT EMAIL SANS CLÉ PAYANTE ---
 @app.get("/audit-email")
 @limiter.limit("5/minute")
 def audit_email(request: Request, email: str, token: str = Depends(verify_api_key)):
-    # Validation basique de l'email
     if "@" not in email or "." not in email:
         raise HTTPException(status_code=400, detail="Format d'email invalide.")
 
-    # On interroge HIBP pour les fuites de comptes
-    # Note : L'API publique gratuite de HIBP pour les emails est limitée, 
-    # nous utilisons ici un appel sécurisé.
-    url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}"
+    # Utilisation de l'API alternative et gratuite de ProxyNova
+    url = f"https://api.proxynova.com/v1/breach?email={email}"
     
-    # HIBP demande souvent un User-Agent spécifique
-    headers = {
-        "User-Agent": "CyberBrain-Audit-App",
-        # "hibp-api-key": "TA_CLE_SI_TU_EN_AS_UNE" # Optionnel pour les tests de base
-    }
-
     try:
-        # On ajoute ?truncateResponse=false pour avoir les détails des fuites
-        res = requests.get(url, headers=headers, params={"truncateResponse": "false"}, timeout=5)
+        res = requests.get(url, timeout=5)
         
         if res.status_code == 200:
-            breaches = res.json()
-            return {
-                "status": "danger",
-                "email": email,
-                "breach_count": len(breaches),
-                "details": [b['Name'] for b in breaches], # Liste des noms des sites piratés
-                "message": f"Cet email apparaît dans {len(breaches)} fuites de données."
-            }
-        elif res.status_code == 404:
-            return {
-                "status": "clean",
-                "email": email,
-                "breach_count": 0,
-                "details": [],
-                "message": "Aucune fuite détectée pour cet email."
-            }
+            data = res.json()
+            # Si le statut est "breached", il y a des fuites
+            if data.get("status") == "breached":
+                breaches = data.get("results", [])
+                return {
+                    "status": "danger",
+                    "email": email,
+                    "breach_count": len(breaches),
+                    "details": breaches, # Liste des sites concernés
+                    "message": f"Cet email apparaît dans {len(breaches)} fuites de données."
+                }
+            else:
+                return {
+                    "status": "clean",
+                    "email": email,
+                    "breach_count": 0,
+                    "details": [],
+                    "message": "Aucune fuite détectée pour cet email."
+                }
         else:
-            return {"status": "error", "message": "Service HIBP temporairement indisponible."}
+            return {"status": "error", "message": f"Le scanner alternatif a répondu avec le code {res.status_code}."}
             
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"Erreur de connexion au scanner : {str(e)}"}e": str(e)}
