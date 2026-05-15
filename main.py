@@ -8,7 +8,7 @@ import hashlib
 import requests
 import zxcvbn
 import os
-import string  # <-- AJOUTÉ : Nécessaire pour string.digits
+import string
 
 # Configuration Sécurité
 limiter = Limiter(key_func=get_remote_address)
@@ -29,7 +29,7 @@ async def verify_api_key(header_key: str = Depends(api_key_header)):
     if is_valid: return header_key
     raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
 
-# --- MOTEURS DE GÉNÉRATION CORRIGÉS ---
+# --- MOTEURS DE GÉNÉRATION ---
 def get_diceware_word(langue="Français"):
     nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
     if os.path.exists(nom_fichier):
@@ -39,12 +39,12 @@ def get_diceware_word(langue="Français"):
     return "cyber"
 
 def generer_hybride(langue="Français"):
-    # Génère une phrase complexe de 4 mots
     mots = [get_diceware_word(langue).capitalize() if secrets.choice([True, False]) else get_diceware_word(langue) for _ in range(4)]
     separateurs = [".", ",", ";", ":", "!", "?", "£", "$"]
     phrase = "".join([m + (secrets.choice(separateurs) if i < 3 else "") for i, m in enumerate(mots)])
     return phrase + secrets.choice(string.digits)
 
+# --- ROUTE 1 : AUDIT MOT DE PASSE ---
 @app.get("/audit")
 @limiter.limit("5/minute")
 def audit_password(request: Request, pwd: str, lang: str = "Français", token: str = Depends(verify_api_key)):
@@ -54,7 +54,6 @@ def audit_password(request: Request, pwd: str, lang: str = "Français", token: s
     analysis = zxcvbn.zxcvbn(pwd)
     score = analysis['score']
     
-    # Audit HIBP (Vérification des fuites)
     sha1 = hashlib.sha1(pwd.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     leaks = 0
@@ -66,26 +65,23 @@ def audit_password(request: Request, pwd: str, lang: str = "Français", token: s
                 if h == suffix: leaks = int(count)
     except: pass
 
-    # --- RETOUR DES DONNÉES (Noms de fonctions harmonisés) ---
     return {
         "status": "secure" if score > 3 and leaks == 0 else "warning",
         "score": score,
         "pwned_leaks": leaks,
         "recommendation": {
-            # Appel de generer_hybride au lieu de la fonction inexistante
             "passphrase_suggestion": generer_hybride(lang),
             "random_token": secrets.token_urlsafe(12)
         }
     }
 
-# --- ROUTE CORRIGÉE : AUDIT EMAIL SANS CLÉ PAYANTE ---
+# --- ROUTE 2 : AUDIT EMAIL SANS CLÉ PAYANTE ---
 @app.get("/audit-email")
 @limiter.limit("5/minute")
 def audit_email(request: Request, email: str, token: str = Depends(verify_api_key)):
     if "@" not in email or "." not in email:
         raise HTTPException(status_code=400, detail="Format d'email invalide.")
 
-    # Utilisation de l'API alternative et gratuite de ProxyNova
     url = f"https://api.proxynova.com/v1/breach?email={email}"
     
     try:
@@ -93,14 +89,13 @@ def audit_email(request: Request, email: str, token: str = Depends(verify_api_ke
         
         if res.status_code == 200:
             data = res.json()
-            # Si le statut est "breached", il y a des fuites
             if data.get("status") == "breached":
                 breaches = data.get("results", [])
                 return {
                     "status": "danger",
                     "email": email,
                     "breach_count": len(breaches),
-                    "details": breaches, # Liste des sites concernés
+                    "details": breaches,
                     "message": f"Cet email apparaît dans {len(breaches)} fuites de données."
                 }
             else:
@@ -115,4 +110,5 @@ def audit_email(request: Request, email: str, token: str = Depends(verify_api_ke
             return {"status": "error", "message": f"Le scanner alternatif a répondu avec le code {res.status_code}."}
             
     except Exception as e:
-        return {"status": "error", "message": f"Erreur de connexion au scanner : {str(e)}"}e": str(e)}
+        # LIGNE 118 CORRIGÉE ICI :
+        return {"status": "error", "message": f"Erreur de connexion au scanner : {str(e)}"}
