@@ -1,83 +1,112 @@
-from fastapi import FastAPI, HTTPException, Security, Depends
-from fastapi.security.api_key import APIKeyHeader
-import hashlib
+import streamlit as st
 import requests
-import zxcvbn
-import secrets
-import string
 import os
 
-# --- CONFIGURATION MULTI-CLIENTS ---
-API_KEY_NAME = "X-API-KEY"
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+# Configuration de la page
+st.set_page_config(page_title="CyberBrain Security Suite", page_icon="🧠", layout="centered")
 
-def get_authorized_keys():
-    """
-    Récupère la liste des clés depuis les variables d'environnement.
-    Format attendu : "CLE_CLIENT_A,CLE_CLIENT_B,CLE_CLIENT_C"
-    """
-    # On récupère la chaîne de caractères, sinon une chaîne vide par défaut
-    keys_raw = os.getenv("ALLOWED_API_KEYS", "")
-    # On transforme la chaîne en liste en coupant au niveau des virgules
-    return [k.strip() for k in keys_raw.split(",") if k.strip()]
+st.title("🧠 CyberBrain : Hub de Sécurité")
+st.write("Protégez votre identité numérique grâce à notre audit de niveau professionnel.")
 
-async def verify_api_key(header_key: str = Depends(api_key_header)):
-    authorized_keys = get_authorized_keys()
+# --- CONFIGURATION DE L'API ---
+# Assure-toi que cette URL correspond bien à ton instance Render
+BASE_URL = "https://cyber-checker-audit.onrender.com"
+API_KEY = os.getenv("CLE_API_INTERNE", "CLE-YVES-PRO")
+
+headers = {"X-API-KEY": API_KEY}
+
+# --- CRÉATION DES ONGLETS ---
+tab1, tab2 = st.tabs(["🔒 Audit Mot de Passe", "📧 Audit Fuite Email"])
+
+# ==========================================
+# ONGLET 1 : AUDIT MOT DE PASSE
+# ==========================================
+with tab1:
+    st.subheader("Analyseur de Robustesse")
+    pwd = st.text_input("Entrez un mot de passe à tester :", type="password", key="pwd_input")
     
-    if header_key in authorized_keys:
-        return header_key
+    if st.button("Analyser le mot de passe", key="btn_pwd"):
+        if pwd:
+            with st.spinner("Analyse cryptographique en cours..."):
+                try:
+                    response = requests.get(f"{BASE_URL}/audit", headers=headers, params={"pwd": pwd, "lang": "Français"})
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        score = data["score"]
+                        leaks = data["pwned_leaks"]
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Score d'Entropie", f"{score}/4")
+                            if score < 2: st.error("⚠️ Trop vulnérable !")
+                            elif score < 4: st.warning("⚠️ Robustesse moyenne")
+                            else: st.success("✅ Excellent niveau")
+                            
+                        with col2:
+                            st.metric("Fuites publiques", f"{leaks} fois")
+                            if leaks > 0: st.error("🚨 Mot de passe compromis !")
+                            else: st.success("✅ Aucun tag de fuite")
+                        
+                        # Recommandations
+                        st.markdown("---")
+                        st.markdown("#### 💡 Recommandation CyberBrain")
+                        st.info(f"**Alternative sécurisée suggérée :** `{data['recommendation']['passphrase_suggestion']}`")
+                        st.caption("Généré via un algorithme Diceware durci. Ce format est idéal contre les attaques par dictionnaire.")
+                        
+                    elif response.status_code == 429:
+                        st.error("🛑 Rate Limit activé : Trop de requêtes. Attendez une minute.")
+                    else:
+                        st.error(f"Erreur technique (API) : {response.status_code}")
+                except Exception as e:
+                    st.error(f"Connexion au serveur impossible : {e}")
+        else:
+            st.warning("Veuillez saisir un mot de passe avant de lancer l'analyse.")
+
+# ==========================================
+# ONGLET 2 : AUDIT FUITE EMAIL
+# ==========================================
+with tab2:
+    st.subheader("Détecteur de Violations d'Identité")
+    email = st.text_input("Entrez votre adresse email :", placeholder="exemple@domaine.com", key="email_input")
     
-    raise HTTPException(
-        status_code=403, 
-        detail="Accès refusé : Clé API invalide, révoquée ou manquante."
-    )
+    if st.button("Scanner les bases de données", key="btn_email"):
+        if email:
+            if "@" not in email or "." not in email:
+                st.error("Le format de l'adresse email semble incorrect.")
+            else:
+                with st.spinner("Recherche dans les archives de fuites..."):
+                    try:
+                        response = requests.get(f"{BASE_URL}/audit-email", headers=headers, params={"email": email})
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            status = data["status"]
+                            breach_count = data["breach_count"]
+                            
+                            if status == "danger":
+                                st.error(f"🚨 Alerte : {data['message']}")
+                                st.markdown("#### Sites impliqués dans le piratage :")
+                                # Affichage propre de la liste des sites compromis
+                                for breach in data["details"]:
+                                    st.write(f"• **{breach}**")
+                                st.warning("👉 Action requise : Changez immédiatement les mots de passe des sites mentionnés.")
+                            
+                            elif status == "clean":
+                                st.success(f"✅ Félicitations ! {data['message']}")
+                                st.balloons() # Petite animation visuelle de victoire !
+                                
+                            else:
+                                st.info(data["message"])
+                                
+                        elif response.status_code == 429:
+                            st.error("🛑 Rate Limit activé : Trop de requêtes. Attendez une minute.")
+                        else:
+                            st.error(f"Erreur technique (API) : {response.status_code}")
+                    except Exception as e:
+                        st.error(f"Connexion au serveur impossible : {e}")
+        else:
+            st.warning("Veuillez entrer une adresse email à analyser.")
 
-app = FastAPI(title="CyberBrain Multi-Client API")
-
-# --- MOTEURS DE GÉNÉRATION (Inchangés pour la cohérence) ---
-def get_diceware_word(langue="Français"):
-    nom_fichier = "diceware-fr.txt" if langue == "Français" else "diceware-en.txt"
-    if os.path.exists(nom_fichier):
-        with open(nom_fichier, "r", encoding="utf-8") as f:
-            dictionnaire = [l.split()[1] for l in f.readlines() if len(l.split()) > 1]
-            return secrets.choice(dictionnaire)
-    return "cyber"
-
-def generer_hybride(langue="Français"):
-    mots = [get_diceware_word(langue).capitalize() if secrets.choice([True, False]) else get_diceware_word(langue) for _ in range(4)]
-    separateurs = [".", ",", ";", ":", "!", "?", "£", "$"]
-    phrase = "".join([m + (secrets.choice(separateurs) if i < 3 else "") for i, m in enumerate(mots)])
-    return phrase + secrets.choice(string.digits)
-
-# --- POINT D'ENTRÉE SÉCURISÉ ---
-
-@app.get("/audit")
-def audit_password(pwd: str, lang: str = "Français", token: str = Depends(verify_api_key)):
-    analysis = zxcvbn.zxcvbn(pwd)
-    score = analysis['score']
-    
-    # Audit HIBP
-    sha1 = hashlib.sha1(pwd.encode('utf-8')).hexdigest().upper()
-    prefix, suffix = sha1[:5], sha1[5:]
-    leaks = 0
-    try:
-        res = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}", timeout=5)
-        if res.status_code == 200:
-            for line in res.text.splitlines():
-                h, count = line.split(':')
-                if h == suffix: leaks = int(count)
-    except: pass
-
-    suggestion = None
-    if score <= 3:
-        suggestion = {
-            "passphrase_narrative": generer_hybride(lang),
-            "random_code": ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
-        }
-
-    return {
-        "score": score,
-        "pwned_leaks": leaks,
-        "recommendation": suggestion,
-        "client_authenticated": True
-    }
+st.divider()
+st.caption("CyberBrain Security Suite v2.5 • Hardened Framework • Propriété de Yves-Pro")
