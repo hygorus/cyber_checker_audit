@@ -77,3 +77,49 @@ def audit_password(request: Request, pwd: str, lang: str = "Français", token: s
             "random_token": secrets.token_urlsafe(12)
         }
     }
+
+# --- NOUVELLE ROUTE : AUDIT EMAIL ---
+@app.get("/audit-email")
+@limiter.limit("5/minute")
+def audit_email(request: Request, email: str, token: str = Depends(verify_api_key)):
+    # Validation basique de l'email
+    if "@" not in email or "." not in email:
+        raise HTTPException(status_code=400, detail="Format d'email invalide.")
+
+    # On interroge HIBP pour les fuites de comptes
+    # Note : L'API publique gratuite de HIBP pour les emails est limitée, 
+    # nous utilisons ici un appel sécurisé.
+    url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{email}"
+    
+    # HIBP demande souvent un User-Agent spécifique
+    headers = {
+        "User-Agent": "CyberBrain-Audit-App",
+        # "hibp-api-key": "TA_CLE_SI_TU_EN_AS_UNE" # Optionnel pour les tests de base
+    }
+
+    try:
+        # On ajoute ?truncateResponse=false pour avoir les détails des fuites
+        res = requests.get(url, headers=headers, params={"truncateResponse": "false"}, timeout=5)
+        
+        if res.status_code == 200:
+            breaches = res.json()
+            return {
+                "status": "danger",
+                "email": email,
+                "breach_count": len(breaches),
+                "details": [b['Name'] for b in breaches], # Liste des noms des sites piratés
+                "message": f"Cet email apparaît dans {len(breaches)} fuites de données."
+            }
+        elif res.status_code == 404:
+            return {
+                "status": "clean",
+                "email": email,
+                "breach_count": 0,
+                "details": [],
+                "message": "Aucune fuite détectée pour cet email."
+            }
+        else:
+            return {"status": "error", "message": "Service HIBP temporairement indisponible."}
+            
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
