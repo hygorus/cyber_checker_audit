@@ -75,7 +75,7 @@ def audit_password(request: Request, pwd: str, lang: str = "Français", token: s
         }
     }
 
-# --- ROUTE 2 : AUDIT EMAIL SANS CLÉ PAYANTE ---
+# --- ROUTE CORRIGÉE : AUDIT EMAIL AVEC GESTION DU 404 ---
 @app.get("/audit-email")
 @limiter.limit("5/minute")
 def audit_email(request: Request, email: str, token: str = Depends(verify_api_key)):
@@ -106,9 +106,21 @@ def audit_email(request: Request, email: str, token: str = Depends(verify_api_ke
                     "details": [],
                     "message": "Aucune fuite détectée pour cet email."
                 }
+                
+        # --- AJOUT DE LA LOGIQUE PROXYNOVA : 404 SIGNIFIE SANS DANGER ---
+        elif res.status_code == 404:
+            return {
+                "status": "clean",
+                "email": email,
+                "breach_count": 0,
+                "details": [],
+                "message": "Aucune fuite détectée pour cet email (0 breach)."
+            }
+            
         else:
             return {"status": "error", "message": f"Le scanner alternatif a répondu avec le code {res.status_code}."}
             
     except Exception as e:
+        return {"status": "error", "message": f"Erreur de connexion au scanner : {str(e)}"}
         # LIGNE 118 CORRIGÉE ICI :
         return {"status": "error", "message": f"Erreur de connexion au scanner : {str(e)}"}
