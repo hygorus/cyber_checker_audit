@@ -65,13 +65,18 @@ def audit_password(request: Request, pwd: str, lang: str = "Français", token: s
                 if h == suffix: leaks = int(count)
     except: pass
 
+    # Génération d'un token hautement diversifié (lettres, chiffres, symboles)
+    # On crée un alphabet robuste pour exclure toute prédictibilité
+    alphabet_secu = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+    mot_de_passe_aleatoire = "".join(secrets.choice(alphabet_secu) for _ in range(16))
+
     return {
         "status": "secure" if score > 3 and leaks == 0 else "warning",
         "score": score,
         "pwned_leaks": leaks,
         "recommendation": {
             "passphrase_suggestion": generer_hybride(lang),
-            "random_token": secrets.token_urlsafe(12)
+            "random_token": mot_de_passe_aleatoire  # <-- Ce jeton contient désormais de vrais caractères diversifiés
         }
     }
 
