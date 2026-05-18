@@ -12,7 +12,7 @@ import string
 import logging
 
 # ==========================================
-# 2. CONFIGURATION DU MONITORING (LOGS)
+# 1. CONFIGURATION DU MONITORING (LOGS)
 # ==========================================
 logging.basicConfig(
     level=logging.INFO,
@@ -22,9 +22,18 @@ logging.basicConfig(
 logger = logging.getLogger("CyberBrainMonitor")
 
 # ==========================================
+# 2. CONFIGURATION DU RATE LIMITER (SLOWAPI)
+# ==========================================
+# On l'initialise BIEN ICI en haut pour que les routes en dessous puissent l'utiliser !
+limiter = Limiter(key_func=get_remote_address)
+
+# ==========================================
 # 3. CONFIGURATION API ET PARAMÈTRES
 # ==========================================
 app = FastAPI(title="CyberBrain API Secure Pro")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 API_KEY_NAME = "X-API-KEY"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
@@ -33,21 +42,17 @@ def get_authorized_keys():
     return [k.strip() for k in keys_raw.split(",") if k.strip()]
 
 # ==========================================
-# 4. VÉRIFICATION ET TRAÇAGE DES CLÉS API (Une seule fois !)
+# 4. VÉRIFICATION ET TRAÇAGE DES CLÉS API
 # ==========================================
 async def verify_api_key(header_key: str = Depends(api_key_header)):
     authorized_keys = get_authorized_keys()
     is_valid = any(secrets.compare_digest(header_key or "", k) for k in authorized_keys)
     
     if is_valid:
-        # Masquage de sécurité
         masquage_cle = f"{header_key[:4]}****" if header_key else "INCONNUE"
-        
-        # Log de succès (INFO)
         logger.info(f"🔑 ACCÈS ACCORDÉ : La clé [{masquage_cle}] a validé une requête.")
         return header_key
         
-    # Log d'alerte en cas d'échec (WARNING)
     logger.warning(f"🚨 TENTATIVE D'INTRUSION : Une clé invalide ou manquante a été soumise.")
     raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
 
