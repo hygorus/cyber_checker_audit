@@ -48,11 +48,17 @@ with tab1:
                             if leaks > 0: st.error("🚨 Mot de passe compromis !")
                             else: st.success("✅ Aucun tag de fuite")
                         
-                        # Recommandations
+                        # Recommandations enrichies
                         st.markdown("---")
-                        st.markdown("#### 💡 Recommandation CyberBrain")
-                        st.info(f"**Alternative sécurisée suggérée :** `{data['recommendation']['passphrase_suggestion']}`")
-                        st.caption("Généré via un algorithme Diceware durci. Ce format est idéal contre les attaques par dictionnaire.")
+                        st.markdown("#### 💡 Recommandations CyberBrain")
+                        
+                        # Option 1 : La Passphrase mémorisable
+                        st.info(f"**Option A (Facile à retenir) :** `{data['recommendation']['passphrase_suggestion']}`")
+                        
+                        # Option 2 : Le mot de passe ultra-complexe (Caractères divers)
+                        st.success(f"**Option B (Sécurité maximale) :** `{data['recommendation']['random_token']}`")
+                        
+                        st.caption("L'Option A utilise une logique Diceware hybride idéale pour vos comptes du quotidien. L'Option B est un jeton hautement diversifié (symboles, chiffres, casses) parfait pour un gestionnaire de mots de passe.")
                         
                     elif response.status_code == 429:
                         st.error("🛑 Rate Limit activé : Trop de requêtes. Attendez une minute.")
