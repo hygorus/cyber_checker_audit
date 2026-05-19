@@ -14,6 +14,7 @@ import sqlite3
 from pydantic import BaseModel
 from crypto_utils import chiffrer_mot_de_passe
 from crypto_utils import dechiffrer_mot_de_passe
+from auth_utils import hacher_mot_de_passe_maitre, verifier_mot_de_passe_maitre
 
 # ==========================================
 # 1. CONFIGURATION DU MONITORING (LOGS)
@@ -254,3 +255,70 @@ def lister_le_coffre(user_id: int, token: str = Depends(verify_api_key)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la lecture du coffre-fort : {str(e)}")
+
+# Modèle de données pour l'authentification
+class UserAuth(BaseModel):
+    email: str
+    password: str
+
+@app.post("/auth/inscription")
+def inscrire_utilisateur(user: UserAuth, token: str = Depends(verify_api_key)):
+    """Inscrit un nouvel utilisateur et hache son mot de passe maître"""
+    hash_mdp = hacher_mot_de_passe_maitre(user.password)
+    
+    try:
+        conn = sqlite3.connect("cyberbrain_vault.db")
+        cursor = conn.cursor()
+        
+        # On tente d'insérer le nouvel utilisateur
+        cursor.execute("""
+            INSERT INTO utilisateurs (email, master_password_hash)
+            VALUES (?, ?)
+        """, (user.email.lower().strip(), hash_mdp))
+        
+        conn.commit()
+        user_id = cursor.lastrowid
+        conn.close()
+        
+        return {
+            "status": "success",
+            "message": "Compte utilisateur créé avec succès !",
+            "user_id": user_id
+        }
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Cet e-mail est déjà enregistré.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'inscription : {str(e)}")
+
+
+@app.post("/auth/connexion")
+def connecter_utilisateur(user: UserAuth, token: str = Depends(verify_api_key)):
+    """Vérifie les identifiants et valide la connexion au coffre-fort"""
+    try:
+        conn = sqlite3.connect("cyberbrain_vault.db")
+        cursor = conn.cursor()
+        
+        # On cherche l'utilisateur par son email
+        cursor.execute("SELECT id, master_password_hash FROM utilisateurs WHERE email = ?", (user.email.lower().strip(),))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            raise HTTPException(status_code=401, detail="Identifiants incorrects (email inconnu).")
+            
+        user_id, hash_stocke = row
+        
+        # Vérification cryptographique du mot de passe
+        if verifier_mot_de_passe_maitre(user.password, hash_stocke):
+            return {
+                "status": "success",
+                "message": "Connexion réussie ! Accès au coffre-fort accordé.",
+                "user_id": user_id
+            }
+        else:
+            raise HTTPException(status_code=401, detail="Identifiants incorrects (mot de passe invalide).")
+            
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la connexion : {str(e)}")
