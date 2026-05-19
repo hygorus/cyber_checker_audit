@@ -47,3 +47,4 @@ fastapi
 uvicorn
 python-multipart
 slowapi
+cryptography==42.0.5
