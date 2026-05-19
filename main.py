@@ -10,6 +10,10 @@ import zxcvbn
 import os
 import string
 import logging
+import sqlite3
+from pydantic import BaseModel
+from crypto_utils import chiffrer_mot_de_passe
+from crypto_utils import dechiffrer_mot_de_passe
 
 # ==========================================
 # 1. CONFIGURATION DU MONITORING (LOGS)
@@ -207,3 +211,46 @@ def ajouter_au_coffre(item: ItemCoffre, token: str = Depends(verify_api_key)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'écriture dans le coffre-fort : {str(e)}")
+
+@app.get("/coffre/liste")
+def lister_le_coffre(user_id: int, token: str = Depends(verify_api_key)):
+    """Récupère et déchiffre tous les mots de passe d'un utilisateur"""
+    try:
+        conn = sqlite3.connect("cyberbrain_vault.db")
+        cursor = conn.cursor()
+        
+        # On récupère tous les sites enregistrés pour cet utilisateur
+        cursor.execute("""
+            SELECT id, nom_site, url_site, identifiant, mot_de_passe_chiffre 
+            FROM coffre_fort 
+            WHERE user_id = ?
+        """, (user_id,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # On reconstruit la liste en déchiffrant chaque mot de passe
+        coffre_dechiffre = []
+        for row in rows:
+            id_item, nom_site, url_site, identifiant, mdp_chiffre = row
+            
+            # Utilisation de notre fonction de déchiffrement
+            mdp_clair = dechiffrer_mot_de_passe(mdp_chiffre)
+            
+            coffre_dechiffre.append({
+                "id": id_item,
+                "nom_site": nom_site,
+                "url_site": url_site,
+                "identifiant": identifiant,
+                "mot_de_passe": mdp_clair
+            })
+            
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "total_comptes": len(coffre_dechiffre),
+            "comptes": coffre_dechiffre
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la lecture du coffre-fort : {str(e)}")
