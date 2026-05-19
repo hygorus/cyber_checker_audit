@@ -2,6 +2,14 @@ import streamlit as st
 import requests
 import os
 
+# Initialisation des variables de session pour l'authentification
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+if "user_id" not in st.session_state:
+    st.session_state["user_id"] = None
+if "user_email" not in st.session_state:
+    st.session_state["user_email"] = ""
+    
 # Configuration de la page
 st.set_page_config(page_title="CyberBrain Security Suite", page_icon="🧠", layout="centered")
 
@@ -116,3 +124,134 @@ with tab2:
 
 st.divider()
 st.caption("CyberBrain Security Suite v2.5 • Hardened Framework • Propriété de Yves-Pro")
+
+def afficher_ecran_auth(base_url, headers):
+    st.markdown("### 🔐 Accès au Coffre-fort CyberBrain")
+    
+    # Choix entre Connexion et Inscription
+    choix_auth = st.radio("Que souhaitez-vous faire ?", ["Se connecter", "Créer un compte"], horizontal=True)
+    
+    email = st.text_input("Adresse e-mail :")
+    password = st.text_input("Mot de passe maître :", type="password")
+    
+    if choix_auth == "Se connecter":
+        if st.button("S'authentifier"):
+            if email and password:
+                try:
+                    payload = {"email": email, "password": password}
+                    response = requests.post(f"{base_url}/auth/connexion", json=payload, headers=headers)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        st.session_state["logged_in"] = True
+                        st.session_state["user_id"] = data["user_id"]
+                        st.session_state["user_email"] = email
+                        st.success("🎉 Connexion réussie ! Chargement de votre coffre...")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Échec de la connexion : {response.json().get('detail')}")
+                except Exception as e:
+                    st.error(f"Erreur de communication avec l'API : {e}")
+            else:
+                st.warning("Veuillez remplir tous les champs.")
+                
+    else:  # Créer un compte
+        if st.button("Créer mon compte sécurisé"):
+            if email and password:
+                try:
+                    payload = {"email": email, "password": password}
+                    response = requests.post(f"{base_url}/auth/inscription", json=payload, headers=headers)
+                    
+                    if response.status_code == 200:
+                        st.success("🚀 Compte créé avec succès ! Vous pouvez maintenant vous connecter.")
+                    else:
+                        st.error(f"❌ Erreur lors de l'inscription : {response.json().get('detail')}")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+            else:
+                st.warning("Veuillez remplir tous les champs.")
+
+def afficher_coffre_fort(base_url, headers):
+    st.markdown(f"### 🧠 Votre Coffre-fort Sécurisé (`{st.session_state['user_email']}`_")
+    
+    if st.button("🚪 Se déconnecter"):
+        st.session_state["logged_in"] = False
+        st.session_state["user_id"] = None
+        st.rerun()
+        
+    st.markdown("---")
+    
+    # --- SECTION 1 : AJOUTER UN MOT DE PASSE ---
+    with st.expander("➕ Ajouter un nouvel identifiant"):
+        nom_site = st.text_input("Nom du site (ex: GitHub, Netflix) :")
+        url_site = st.text_input("URL du site :", placeholder="https://...")
+        identifiant = st.text_input("Identifiant / Nom d'utilisateur :")
+        mdp = st.text_input("Mot de passe à enregistrer :", type="password")
+        
+        if st.button("Chiffrer et sauvegarder"):
+            if nom_site and identifiant and mdp:
+                payload = {
+                    "user_id": st.session_state["user_id"],
+                    "nom_site": nom_site,
+                    "url_site": url_site,
+                    "identifiant": identifiant,
+                    "mot_de_passe_a_stocker": mdp
+                }
+                res = requests.post(f"{base_url}/coffre/ajouter", json=payload, headers=headers)
+                if res.status_code == 200:
+                    data = res.json()
+                    st.success(f"✅ {data['message']}")
+                    
+                    # On affiche directement l'audit CyberBrain du mot de passe qu'il vient de stocker !
+                    audit = data["audit_result"]
+                    st.write(f"📊 Robustesse de ce mot de passe : **{audit['score']}/4** ({audit['statut_robustesse']})")
+                    st.rerun()
+                else:
+                    st.error("Erreur lors de la sauvegarde.")
+            else:
+                st.warning("Veuillez remplir les champs obligatoires (*).")
+
+    # --- SECTION 2 : VISUALISER LES MOTS DE PASSE ENREGISTRÉS ---
+    st.markdown("#### 🔑 Vos identifiants enregistrés")
+    try:
+        params = {"user_id": st.session_state["user_id"]}
+        res = requests.get(f"{base_url}/coffre/liste", params=params, headers=headers)
+        
+        if res.status_code == 200:
+            comptes = res.json().get("comptes", [])
+            if not comptes:
+                st.info("Votre coffre-fort est vide pour le moment.")
+            else:
+                for compte in comptes:
+                    with st.container():
+                        col1, col2, col3 = st.columns([2, 2, 1])
+                        col1.markdown(f"**🌐 {compte['nom_site']}**\n*{compte['identifiant']}*")
+                        # Option pour afficher le mot de passe déchiffré de manière élégante
+                        col2.text_input("Mot de passe déchiffré :", value=compte['mot_de_passe'], type="password", key=f"compte_{compte['id']}")
+                        if compte['url_site']:
+                            col3.markdown(f"[Accéder au site]({compte['url_site']})")
+                        st.markdown("---")
+        else:
+            st.error("Impossible de récupérer vos mots de passe.")
+    except Exception as e:
+        st.error(f"Erreur de chargement : {e}")
+
+# --- MENU PRINCIPAL DE L'APPLICATION ---
+st.sidebar.title("🧭 Navigation CyberBrain")
+mode = st.sidebar.radio("Sélectionnez un outil :", ["🛡️ Hub d'Audit Public", "🔐 Mon Coffre-fort"])
+
+# Headers globaux pour l'API (avec ta clé secrète)
+BASE_URL = "https://cyber-checker-audit.onrender.com"
+HEADERS = {"X-API-KEY": os.getenv("CLE_API_INTERNE", "CLE-YVES-PRO")}
+
+if mode == "🛡️ Hub d'Audit Public":
+    # Ici, tu places tout ton ancien code avec tes deux onglets :
+    # "Audit Mot de Passe" et "Audit Fuite Email" que tu as actuellement !
+    st.title("CyberBrain : Hub de Sécurité")
+    # ... (conserve tes deux onglets actuels ici) ...
+
+elif mode == "🔐 Mon Coffre-fort":
+    if not st.session_state["logged_in"]:
+        afficher_ecran_auth(BASE_URL, HEADERS)
+    else:
+        afficher_coffre_fort(BASE_URL, HEADERS)
