@@ -156,3 +156,54 @@ def audit_email(request: Request, email: str, token: str = Depends(verify_api_ke
         return {"status": "error", "message": f"Erreur de connexion au scanner : {str(e)}"}
         # LIGNE 118 CORRIGÉE ICI :
         return {"status": "error", "message": f"Erreur de connexion au scanner : {str(e)}"}
+
+# Modèle de données pour valider ce que l'interface Streamlit nous envoie
+class ItemCoffre(BaseModel):
+    user_id: int
+    nom_site: str
+    url_site: str
+    identifiant: str
+    mot_de_passe_a_stocker: str
+
+@app.post("/coffre/ajouter")
+def ajouter_au_coffre(item: ItemCoffre, token: str = Depends(verify_api_key)):
+    # 1. On lance d'abord l'audit de robustesse sur le mot de passe soumis
+    # On réutilise exactement la logique que l'on a construite ensemble
+    analysis = zxcvbn.zxcvbn(item.mot_de_passe_a_stocker)
+    score = analysis['score']
+    
+    # Génération de nos alternatives durcies au cas où l'utilisateur veut corriger son mot de passe
+    passphrase_suggeree = generer_hybride("Français")
+    alphabet_secu = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+    token_complexe = "".join(secrets.choice(alphabet_secu) for _ in range(16))
+    
+    # 2. Sécurisation : On CHIFFRE le mot de passe avant l'insertion en base
+    mdp_chiffre = chiffrer_mot_de_passe(item.mot_de_passe_a_stocker)
+    
+    # 3. Insertion dans la base de données SQLite
+    try:
+        conn = sqlite3.connect("cyberbrain_vault.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO coffre_fort (user_id, nom_site, url_site, identifiant, mot_de_passe_chiffre)
+            VALUES (?, ?, ?, ?, ?)
+        """, (item.user_id, item.nom_site, item.url_site, item.identifiant, mdp_chiffre))
+        
+        conn.commit()
+        conn.close()
+        
+        # 4. On renvoie une réponse complète : confirmation + rapport de sécurité CyberBrain
+        return {
+            "status": "success",
+            "message": f"Identifiant pour {item.nom_site} enregistré et chiffré avec succès.",
+            "audit_result": {
+                "score": score,
+                "statut_robustesse": "Sécurisé" if score >= 3 else "Vulnérable (Pensez à le changer)",
+                "alternatives_proposees": {
+                    "option_a_diceware": passphrase_suggeree,
+                    "option_b_complexe": token_complexe
+                }
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'écriture dans le coffre-fort : {str(e)}")
