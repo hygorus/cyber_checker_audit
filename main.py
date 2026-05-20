@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from crypto_utils import chiffrer_mot_de_passe
 from crypto_utils import dechiffrer_mot_de_passe
 from auth_utils import hacher_mot_de_passe_maitre, verifier_mot_de_passe_maitre
+from database import init_db
 
 # ==========================================
 # 1. CONFIGURATION DU MONITORING (LOGS)
@@ -36,6 +37,8 @@ limiter = Limiter(key_func=get_remote_address)
 # 3. CONFIGURATION API ET PARAMÈTRES
 # ==========================================
 app = FastAPI(title="CyberBrain API Secure Pro")
+# Déclenche la création des tables SQLite si elles n'existent pas encore
+init_db()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
