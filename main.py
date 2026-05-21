@@ -325,3 +325,31 @@ def connecter_utilisateur(user: UserAuth, token: str = Depends(verify_api_key)):
         raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la connexion : {str(e)}")
+
+@app.get("/admin/utilisateurs")
+def lister_utilisateurs_admin(token: str = Depends(verify_api_key)):
+    """Route hautement sécurisée pour que Yves puisse voir les inscrits"""
+    try:
+        conn = sqlite3.connect("cyberbrain_vault.db")
+        cursor = conn.cursor()
+        
+        # On récupère les IDs, les e-mails et la date de création
+        cursor.execute("SELECT id, email, created_at FROM utilisateurs")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        utilisateurs = []
+        for row in rows:
+            utilisateurs.append({
+                "id": row[0],
+                "email": row[1],
+                "date_inscription": row[2]
+            })
+            
+        return {
+            "PROPRIÉTAIRE": "Yves-Pro",
+            "total_utilisateurs": len(utilisateurs),
+            "liste": utilisateurs
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
