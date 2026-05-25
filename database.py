@@ -1,39 +1,45 @@
-import sqlite3
+import psycopg2
 import os
 
-DB_NAME = "cyberbrain_vault.db"
+# Si la variable DATABASE_URL existe sur Render, on l'utilise. Sinon, on prend ta chaîne Supabase locale.
+DB_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql://postgres.siuwslfefkatmcsfwixh:25-05-26*SupaBase@@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
+)
+
+def get_db_connection():
+    """Crée une connexion réseau directe vers PostgreSQL sur Supabase"""
+    return psycopg2.connect(DB_URL)
 
 def init_db():
-    """Initialise la base de données SQL de CyberBrain"""
-    conn = sqlite3.connect(DB_NAME)
+    """Initialise les tables indispensables dans PostgreSQL si elles n'existent pas"""
+    conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Création de la table des utilisateurs
+    # 1. Table Utilisateurs (Syntaxe Postgres avec SERIAL pour l'auto-incrément)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS utilisateurs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE NOT NULL,
-        master_password_hash TEXT NOT NULL,
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        master_password_hash VARCHAR(255) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
+    );
     """)
     
-    # 2. Création de la table du coffre-fort (mots de passe chiffrés)
+    # 2. Table CoffreFort
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS coffre_fort (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
-        nom_site TEXT NOT NULL,
-        url_site TEXT,
-        identifiant TEXT NOT NULL,
-        mot_de_passe_chiffre TEXT NOT NULL, -- Chiffré en AES-256
-        FOREIGN KEY (user_id) REFERENCES utilisateurs(id)
-    )
+        nom_site VARCHAR(255) NOT NULL,
+        url_site VARCHAR(255),
+        identifiant VARCHAR(255) NOT NULL,
+        mot_de_passe_chiffre TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES utilisateurs(id) ON DELETE CASCADE
+    );
     """)
     
     conn.commit()
+    cursor.close()
     conn.close()
-    print("🧠 Base de données CyberBrain initialisée avec succès !")
-
-if __name__ == "__main__":
-    init_db()
+    print("🐘 Base de données PostgreSQL (Supabase) initialisée avec succès !")
