@@ -1,16 +1,13 @@
 import psycopg2
 import os
 
-# Récupération de l'URL propre de Render
+# On récupère STRICTEMENT la variable d'environnement de Render. Aucune valeur par défaut en dur.
 DB_URL = os.getenv("DATABASE_URL")
 
 def get_db_connection():
     """Crée une connexion réseau directe vers PostgreSQL sur Supabase"""
     conn = psycopg2.connect(DB_URL)
-    
-    # 💡 LIGNE AJOUTÉE : Indispensable pour que Supabase accepte les requêtes de l'API
     conn.autocommit = True
-    
     return conn
 
 def init_db():
