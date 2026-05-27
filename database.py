@@ -1,15 +1,17 @@
 import psycopg2
 import os
 
-# Si la variable DATABASE_URL existe sur Render, on l'utilise. Sinon, on prend ta chaîne Supabase locale.
-DB_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql://postgres.siuwslfefkatmcsfwixh:25-05-26*SupaBase@@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
-)
+# Récupération de l'URL propre de Render
+DB_URL = os.getenv("DATABASE_URL")
 
 def get_db_connection():
     """Crée une connexion réseau directe vers PostgreSQL sur Supabase"""
-    return psycopg2.connect(DB_URL)
+    conn = psycopg2.connect(DB_URL)
+    
+    # 💡 LIGNE AJOUTÉE : Indispensable pour que Supabase accepte les requêtes de l'API
+    conn.autocommit = True
+    
+    return conn
 
 def init_db():
     """Initialise les tables indispensables dans PostgreSQL si elles n'existent pas"""
@@ -39,7 +41,7 @@ def init_db():
     );
     """)
     
-    conn.commit()
+    # Note : Plus besoin de conn.commit() ici car autocommit est activé au-dessus
     cursor.close()
     conn.close()
     print("🐘 Base de données PostgreSQL (Supabase) initialisée avec succès !")
