@@ -28,7 +28,17 @@ logger = logging.getLogger("CyberBrainMonitor")
 # ==========================================
 # 2. CONFIGURATION DU RATE LIMITER (SLOWAPI)
 # ==========================================
-limiter = Limiter(key_func=get_remote_address)
+def get_real_user_ip(request: Request) -> str:
+    # Render transmet la vraie IP du visiteur dans cet en-tête
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        # On prend la première IP de la liste (au cas où il y en a plusieurs)
+        return forwarded.split(",")[0].strip()
+    # Si on est en local et que l'en-tête n'existe pas, on prend l'IP standard
+    return request.client.host if request.client else "127.0.0.1"
+
+# Remplace l'ancienne configuration par celle-ci
+limiter = Limiter(key_func=get_real_user_ip)
 
 # ==========================================
 # 3. CONFIGURATION API ET PARAMÈTRES
