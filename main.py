@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from database import get_db_connection, init_db
 from crypto_utils import chiffrer_mot_de_passe, dechiffrer_mot_de_passe
 from auth_utils import hacher_mot_de_passe_maitre, verifier_mot_de_passe_maitre
+from pydantic import BaseModel
 
 # ==========================================
 # 1. CONFIGURATION DU MONITORING (LOGS)
@@ -109,17 +110,21 @@ class UserAuth(BaseModel):
 # 6. ROUTES DE L'APPLICATION
 # ==========================================
 
-@app.get("/audit")
+class PasswordCheckInput(BaseModel):
+    pwd: str
+    lang: str = "Français"
+
+@app.post("/audit")  # <-- Changé en .post
 @limiter.limit("5/minute")
-async def audit_password(request: Request, pwd: str, lang: str = "Français", token: str = Depends(verify_api_key)):
-    # 1. On extrait la vraie IP de l'utilisateur (gère Render et le local)
+async def audit_password(request: Request, input_data: PasswordCheckInput, token: str = Depends(verify_api_key)):
+    # 1. Extraction de la vraie IP
     real_ip = get_real_user_ip(request)
-    
-    # 2. On affiche le message personnalisé dans les logs de Render
-    # Note : On ne print JAMAIS le mot de passe en clair ('pwd') dans les logs pour des raisons évidentes de sécurité.
     print(f" 🔐 LOG: Une analyse de mot de passe a été demandée depuis l'IP : {real_ip}")
 
-    # 3. Validation de la longueur
+    # 2. On récupère les variables depuis l'objet input_data
+    pwd = input_data.pwd
+    lang = input_data.lang
+
     if len(pwd) > 128:
         raise HTTPException(status_code=400, detail="Mot de passe trop long (max 128 car.)")
 
