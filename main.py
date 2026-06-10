@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from database import get_db_connection, init_db
 from crypto_utils import chiffrer_mot_de_passe, dechiffrer_mot_de_passe
 from auth_utils import hacher_mot_de_passe_maitre, verifier_mot_de_passe_maitre
-from pydantic import BaseModel
 
 # ==========================================
 # 1. CONFIGURATION DU MONITORING (LOGS)
@@ -105,34 +104,61 @@ class UserAuth(BaseModel):
     email: str
     password: str
 
-
-# ==========================================
-# 6. ROUTES DE L'APPLICATION
-# ==========================================
-
 class PasswordCheckInput(BaseModel):
     pwd: str
     lang: str = "Français"
 
-@app.post("/audit")  # <-- Changé en .post
+
+# ==========================================
+# 6. FONCTION INTERNE : AUDIT TEMPS RÉEL (HIBP)
+# ==========================================
+def verifier_fuite_mot_de_passe(mdp_clair: str) -> str:
+    """Vérifie de manière sécurisée (k-anonymity) si le mot de passe a fuité"""
+    try:
+        if not mdp_clair or mdp_clair == "[Erreur de déchiffrement]":
+            return "❌ Impossible d'auditer"
+            
+        # 1. Hachage SHA-1 en majuscules
+        sha1_hash = hashlib.sha1(mdp_clair.encode('utf-8')).hexdigest().upper()
+        prefixe = sha1_hash[:5]
+        suffixe = sha1_hash[5:]
+        
+        # 2. Requête anonyme à l'API Have I Been Pwned
+        url = f"https://api.pwnedpasswords.com/range/{prefixe}"
+        response = requests.get(url, timeout=4)
+        
+        if response.status_code == 200:
+            # 3. Recherche du suffixe dans les résultats de l'API
+            lignes = response.text.splitlines()
+            for ligne in lignes:
+                hachage_recupere, nb_fuites = ligne.split(':')
+                if hachage_recupere == suffixe:
+                    return f"⚠️ Compromis (vu {nb_fuites} fois !)"
+            return "✅ Sûr (aucune fuite détectée)"
+        return "⚡ Audit indisponible (Serveur distant)"
+    except Exception:
+        return "🔍 Non audité (Timeout API)"
+
+
+# ==========================================
+# 7. ROUTES DE L'APPLICATION
+# ==========================================
+
+@app.post("/audit")
 @limiter.limit("5/minute")
 async def audit_password(request: Request, input_data: PasswordCheckInput, token: str = Depends(verify_api_key)):
-    # 1. Extraction de la vraie IP
     real_ip = get_real_user_ip(request)
-    print(f" 🔐 LOG: Une analyse de mot de passe a été demandée depuis l'IP : {real_ip}")
+    logger.info(f"🔐 LOG: Une analyse de mot de passe a été demandée depuis l'IP : {real_ip}")
 
-    # 2. On récupère les variables depuis l'objet input_data
     pwd = input_data.pwd
     lang = input_data.lang
 
     if len(pwd) > 128:
         raise HTTPException(status_code=400, detail="Mot de passe trop long (max 128 car.)")
 
-    # Analyse de robustesse avec zxcvbn
     analysis = zxcvbn.zxcvbn(pwd)
     score = analysis['score']
     
-    # Vérification des fuites de données (HaveIBeenPwned API)
     sha1 = hashlib.sha1(pwd.encode('utf-8')).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     leaks = 0
@@ -146,7 +172,6 @@ async def audit_password(request: Request, input_data: PasswordCheckInput, token
     except: 
         pass
 
-    # Génération d'une alternative aléatoire sécurisée
     alphabet_secu = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
     mot_de_passe_aleatoire = "".join(secrets.choice(alphabet_secu) for _ in range(16))
 
@@ -163,13 +188,9 @@ async def audit_password(request: Request, input_data: PasswordCheckInput, token
 @app.get("/audit-email")
 @limiter.limit("5/minute")
 async def audit_email(request: Request, email: str, token: str = Depends(verify_api_key)):
-    # 1. On appelle ta fonction pour extraire la vraie IP (gère le proxy Render + le local)
     real_ip = get_real_user_ip(request)
-    
-    # 2. On affiche la vraie IP dans les logs de Render
-    print(f" LOG: Un audit d'email ({email}) a été demandé depuis l'IP : {real_ip}")
+    logger.info(f"LOG: Un audit d'email ({email}) a été demandé depuis l'IP : {real_ip}")
 
-    # --- Reste de ton code (inchangé) ---
     if "@" not in email or "." not in email:
         raise HTTPException(status_code=400, detail="Format d'email invalide.")
 
@@ -213,13 +234,6 @@ async def audit_email(request: Request, email: str, token: str = Depends(verify_
 
 @app.post("/coffre/ajouter")
 def ajouter_au_coffre(item: ItemCoffre, token: str = Depends(verify_api_key)):
-    analysis = zxcvbn.zxcvbn(item.mot_de_passe_a_stocker)
-    score = analysis['score']
-    
-    passphrase_suggeree = generer_hybride("Français")
-    alphabet_secu = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
-    token_complexe = "".join(secrets.choice(alphabet_secu) for _ in range(16))
-    
     # Sécurisation : Chiffrement AES-Fernet avant l'envoi vers la base
     mdp_chiffre = chiffrer_mot_de_passe(item.mot_de_passe_a_stocker)
     
@@ -240,7 +254,7 @@ def ajouter_au_coffre(item: ItemCoffre, token: str = Depends(verify_api_key)):
 
 @app.get("/coffre/liste")
 def lister_le_coffre(user_id: int, token: str = Depends(verify_api_key)):
-    """Récupère et déchiffre tous les mots de passe d'un utilisateur"""
+    """Récupère, déchiffre et audite en temps réel tous les mots de passe"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -253,15 +267,20 @@ def lister_le_coffre(user_id: int, token: str = Depends(verify_api_key)):
         for row in rows:
             try:
                 mdp_clair = dechiffrer_mot_de_passe(row[3])
-            except:
+                # 🧠 AUDIT EN TEMPS RÉEL CONTRE LES FUITES GLOBALES
+                statut_audit = verifier_fuite_mot_de_passe(mdp_clair)
+            except Exception:
                 mdp_clair = "[Erreur de déchiffrement]"
+                statut_audit = "❌ Erreur de clés"
                 
             coffre_dechiffre.append({
                 "nom_site": row[0],
                 "url_site": row[1],
                 "identifiant": row[2],
-                "mot_de_passe": mdp_clair
+                "mot_de_passe": mdp_clair,
+                "audit_result": statut_audit  # Injecté pour Streamlit
             })
+            
         return {"comptes": coffre_dechiffre}
         
     except Exception as e:
