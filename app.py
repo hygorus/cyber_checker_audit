@@ -220,9 +220,6 @@ def afficher_coffre_fort(base_url, headers):
                 if res.status_code == 200:
                     data = res.json()
                     st.success(f"✅ {data['message']}")
-                    
-                    audit = data["audit_result"]
-                    st.write(f"📊 Robustesse de ce mot de passe : **{audit['score']}/4** ({audit['statut_robustesse']})")
                     st.rerun()
                 else:
                     st.error("Erreur lors de la sauvegarde.")
@@ -244,9 +241,23 @@ def afficher_coffre_fort(base_url, headers):
                     with st.container():
                         col1, col2, col3 = st.columns([2, 2, 1])
                         col1.markdown(f"**🌐 {compte['nom_site']}**\n*{compte['identifiant']}*")
-                        col2.text_input("Mot de passe déchiffré :", value=compte['mot_de_passe'], type="password", key=f"compte_{compte['id']}")
+                        
+                        # Génération d'une clé d'élément unique basée sur les chaînes de texte pour éviter les collisions
+                        cle_unique = f"pwd_{compte['nom_site']}_{compte['identifiant']}"
+                        col2.text_input("Mot de passe déchiffré :", value=compte['mot_de_passe'], type="password", key=cle_unique)
+                        
                         if compte['url_site']:
                             col3.markdown(f"[Accéder au site]({compte['url_site']})")
+                        
+                        # 🎨 AJOUT : Affichage dynamique de l'audit en temps réel sous la ligne
+                        audit_status = compte.get("audit_result", "🔍 Non audité")
+                        if "⚠️" in audit_status:
+                            st.error(f"Statut : {audit_status}")
+                        elif "✅" in audit_status:
+                            st.success(f"Statut : {audit_status}")
+                        else:
+                            st.info(f"Statut : {audit_status}")
+                            
                         st.markdown("---")
         else:
             st.error("Impossible de récupérer vos mots de passe.")
@@ -258,7 +269,6 @@ st.sidebar.title("🧭 Navigation CyberBrain")
 mode = st.sidebar.radio("Sélectionnez un outil :", ["🛡️ Hub d'Audit Public", "🔐 Mon Coffre-fort"])
 
 if mode == "🛡️ Hub d'Audit Public":
-    # L'affichage des onglets se fait directement ici
     pass
 elif mode == "🔐 Mon Coffre-fort":
     if not st.session_state["logged_in"]:
