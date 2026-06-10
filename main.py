@@ -262,7 +262,7 @@ def lister_le_coffre(user_id: int, token: str = Depends(verify_api_key)):
                 "identifiant": row[2],
                 "mot_de_passe": mdp_clair
             })
-        return {"comptes": liste_comptes}
+        return {"comptes": coffre_dechiffre}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur de lecture BDD : {str(e)}")
