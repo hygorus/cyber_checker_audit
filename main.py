@@ -253,12 +253,25 @@ def ajouter_au_coffre(item: ItemCoffre, token: str = Depends(verify_api_key)):
 
 
 @app.get("/coffre/liste")
-def lister_le_coffre(user_id: int, token: str = Depends(verify_api_key)):
-    """Récupère, déchiffre et audite en temps réel tous les mots de passe"""
+def lister_le_coffre(user_email: str, token: str = Depends(verify_api_key)):
+    """Récupère, déchiffre et audite en temps réel les mots de passe de l'utilisateur authentifié"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT nom_site, url_site, identifiant, mot_de_passe_chiffre FROM coffre_fort WHERE user_id = %s", (user_id,))
+        
+        # 🧠 1. Sécurisation : Trouver l'ID utilisateur à partir de son email vérifié
+        cursor.execute("SELECT id FROM utilisateurs WHERE email = %s", (user_email.lower().strip(),))
+        user_row = cursor.fetchone()
+        
+        if not user_row:
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+            
+        real_user_id = user_row[0]
+        
+        # 2. On utilise cet ID interne récupéré de manière sûre pour l'interrogation
+        cursor.execute("SELECT nom_site, url_site, identifiant, mot_de_passe_chiffre FROM coffre_fort WHERE user_id = %s", (real_user_id,))
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -267,7 +280,6 @@ def lister_le_coffre(user_id: int, token: str = Depends(verify_api_key)):
         for row in rows:
             try:
                 mdp_clair = dechiffrer_mot_de_passe(row[3])
-                # 🧠 AUDIT EN TEMPS RÉEL CONTRE LES FUITES GLOBALES
                 statut_audit = verifier_fuite_mot_de_passe(mdp_clair)
             except Exception:
                 mdp_clair = "[Erreur de déchiffrement]"
@@ -278,17 +290,19 @@ def lister_le_coffre(user_id: int, token: str = Depends(verify_api_key)):
                 "url_site": row[1],
                 "identifiant": row[2],
                 "mot_de_passe": mdp_clair,
-                "audit_result": statut_audit  # Injecté pour Streamlit
+                "audit_result": statut_audit
             })
             
         return {"comptes": coffre_dechiffre}
         
     except Exception as e:
+        if "HTTPException" in str(type(e)): raise e
         raise HTTPException(status_code=500, detail=f"Erreur de lecture BDD : {str(e)}")
 
 
 @app.post("/auth/inscription")
-def inscrire_utilisateur(user: UserAuth, token: str = Depends(verify_api_key)):
+@limiter.limit("3/minute") # 👈 Limite stricte pour la création de compte
+def inscrire_utilisateur(request: Request, user: UserAuth, token: str = Depends(verify_api_key)):
     """Inscrit un nouvel utilisateur et hache son mot de passe maître"""
     hash_mdp = hacher_mot_de_passe_maitre(user.password)
     email_clean = user.email.lower().strip()
@@ -321,7 +335,8 @@ def inscrire_utilisateur(user: UserAuth, token: str = Depends(verify_api_key)):
 
 
 @app.post("/auth/connexion")
-def connecter_utilisateur(user: UserAuth, token: str = Depends(verify_api_key)):
+@limiter.limit("5/minute") # 👈 Limite standard pour l'authentification
+def connecter_utilisateur(request: Request, user: UserAuth, token: str = Depends(verify_api_key)):
     """Vérifie les identifiants et valide la connexion au coffre-fort"""
     email_clean = user.email.lower().strip()
     try:
@@ -348,8 +363,15 @@ def connecter_utilisateur(user: UserAuth, token: str = Depends(verify_api_key)):
 
 
 @app.get("/admin/utilisateurs")
-def lister_utilisateurs_admin(token: str = Depends(verify_api_key)):
+def lister_utilisateurs_admin(admin_email: str, token: str = Depends(verify_api_key)):
     """Route hautement sécurisée pour que Yves puisse voir les inscrits"""
+    # 🧠 VÉRIFICATION DU RÔLE / IDENTITÉ
+    YVES_EMAIL = os.getenv("ADMIN_EMAIL", "hheizeneim+streamlit@gmail.com") # Mets ton vrai email ici
+
+    if admin_email.lower().strip() != YVES_EMAIL.lower().strip():
+        logger.warning(f"🚨 ACCÈS REFUSÉ : Tentative de lecture admin par {admin_email}")
+        raise HTTPException(status_code=403, detail="Accès interdit : Vous n'êtes pas l'administrateur de ce système.")
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
