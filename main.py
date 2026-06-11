@@ -366,7 +366,7 @@ def connecter_utilisateur(request: Request, user: UserAuth, token: str = Depends
 def lister_utilisateurs_admin(admin_email: str, token: str = Depends(verify_api_key)):
     """Route hautement sécurisée pour que Yves puisse voir les inscrits"""
     # 🧠 VÉRIFICATION DU RÔLE / IDENTITÉ
-    YVES_EMAIL = os.getenv("ADMIN_EMAIL", "hheizeneim+streamlit@gmail.com") # Mets ton vrai email ici
+    YVES_EMAIL = os.getenv("ADMIN_EMAIL", "go6axe4nh@mozmail.com") # Mets ton vrai email ici
 
     if admin_email.lower().strip() != YVES_EMAIL.lower().strip():
         logger.warning(f"🚨 ACCÈS REFUSÉ : Tentative de lecture admin par {admin_email}")
