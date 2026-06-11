@@ -229,7 +229,7 @@ def afficher_coffre_fort(base_url, headers):
     # --- SECTION 2 : VISUALISER LES MOTS DE PASSE ENREGISTRÉS ---
     st.markdown("#### 🔑 Vos identifiants enregistrés")
     try:
-        params = {"user_id": st.session_state["user_id"]}
+        params = {"user_email": st.session_state["user_email"]}
         res = requests.get(f"{base_url}/coffre/liste", params=params, headers=headers)
         
         if res.status_code == 200:
