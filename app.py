@@ -132,12 +132,21 @@ def afficher_ecran_auth(base_url, headers):
     
     choix_auth = st.radio("Que souhaitez-vous faire ?", ["Se connecter", "Créer un compte"], horizontal=True)
     
-    email = st.text_input("Adresse e-mail :")
-    password = st.text_input("Mot de passe maître :", type="password")
-    
-    if choix_auth == "Se connecter":
-        if st.button("S'authentifier"):
-            if email and password:
+    # 🧠 ON CRÉE UN FORMULAIRE SÉCURISÉ ICI
+    # clear_on_submit=False permet de garder les données si besoin, ou True pour effacer après clic
+    with st.form(key="formulaire_authentification"):
+        
+        email = st.text_input("Adresse e-mail :")
+        password = st.text_input("Mot de passe maître :", type="password")
+        
+        # Dans un st.form, le st.button classique est REMPLACÉ par st.form_submit_button
+        texte_bouton = "S'authentifier" if choix_auth == "Se connecter" else "Créer mon compte sécurisé"
+        soumis = st.form_submit_button(label=texte_bouton)
+        
+    # 🧠 LA LOGIQUE S'EXÉCUTE QUAND ON APPUIE SUR ENTRÉE OU SUR LE BOUTON
+    if soumis:
+        if email and password:
+            if choix_auth == "Se connecter":
                 try:
                     payload = {"email": email, "password": password}
                     response = requests.post(f"{base_url}/auth/connexion", json=payload, headers=headers)
@@ -153,12 +162,8 @@ def afficher_ecran_auth(base_url, headers):
                         st.error(f"❌ Échec de la connexion : {response.json().get('detail')}")
                 except Exception as e:
                     st.error(f"Erreur de communication avec l'API : {e}")
-            else:
-                st.warning("Veuillez remplir tous les champs.")
-                
-    else:  # Créer un compte
-        if st.button("Créer mon compte sécurisé"):
-            if email and password:
+                    
+            else:  # Créer un compte
                 try:
                     payload = {"email": email, "password": password}
                     response = requests.post(f"{base_url}/auth/inscription", json=payload, headers=headers)
@@ -169,8 +174,8 @@ def afficher_ecran_auth(base_url, headers):
                         st.error(f"❌ Erreur lors de l'inscription : {response.json().get('detail')}")
                 except Exception as e:
                     st.error(f"Erreur : {e}")
-            else:
-                st.warning("Veuillez remplir tous les champs.")
+        else:
+            st.warning("Veuillez remplir tous les champs.")
 
 def afficher_coffre_fort(base_url, headers):
     st.markdown(f"### 🧠 Votre Coffre-fort Sécurisé (`{st.session_state['user_email']}`)")
