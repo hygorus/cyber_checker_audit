@@ -188,14 +188,18 @@ async def audit_password(request: Request, input_data: PasswordCheckInput, token
 @app.get("/audit-email")
 @limiter.limit("5/minute")
 async def audit_email(request: Request, email: str, token: str = Depends(verify_api_key)):
+    # 1. Extraction de la vraie IP (via ton helper configuré pour Render)
     real_ip = get_real_user_ip(request)
-    logger.info(f"LOG: Un audit d'email ({email}) a été demandé depuis l'IP : {real_ip}")
+    
+    # 2. Affichage du log harmonisé dans la console Render
+    logger.info(f"📧 LOG: Un audit d'email ({email}) a été demandé depuis l'IP : {real_ip}")
 
+    # 3. Validation du format de l'e-mail
     if "@" not in email or "." not in email:
         raise HTTPException(status_code=400, detail="Format d'email invalide.")
 
+    # 4. Interrogation du scanner de fuites
     url = f"https://api.proxynova.com/v1/breach?email={email}"
-    
     try:
         res = requests.get(url, timeout=5)
         if res.status_code == 200:
