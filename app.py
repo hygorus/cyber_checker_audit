@@ -10,21 +10,12 @@ if "user_id" not in st.session_state:
 if "user_email" not in st.session_state:
     st.session_state["user_email"] = ""
 
-# Configuration de la page
+# Configuration de la page (Standard et propre)
 st.set_page_config(page_title="CyberBrain Security Suite", page_icon="🧠", layout="centered")
 
-# --- PERSONNALISATION GRAPHIQUE (Améthyste & Lapis-lazuli) ---
-st.markdown(
-    """
-    <h1 style='text-align: center; color: #9966CC; font-family: sans-serif;'>
-        🧠 CyberBrain : Hub de Sécurité
-    </h1>
-    <p style='text-align: center; color: #FAFAFA; font-size: 1.1em;'>
-        Protégez votre identité numérique grâce à notre audit de niveau professionnel.
-    </p>
-    """, 
-    unsafe_allow_html=True
-)
+# --- TITRE PRINCIPAL DE L'APPLICATION (Style standard et universel) ---
+st.title("🧠 CyberBrain : Hub de Sécurité")
+st.markdown("Protégez votre identité numérique grâce à notre audit de niveau professionnel.")
 
 # --- CONFIGURATION DE L'API ---
 BASE_URL = "https://cyber-checker-audit.onrender.com"
@@ -40,27 +31,24 @@ tab1, tab2 = st.tabs(["🔒 Audit Mot de Passe", "📧 Audit Fuite Email"])
 # ONGLET 1 : AUDIT MOT DE PASSE (Sécurisé en POST)
 # ==========================================
 with tab1:
-    st.markdown("<h3 style='color: #2643B9;'>Analyseur de Robustesse</h3>", unsafe_allow_html=True)
+    st.subheader("Analyseur de Robustesse")
     pwd = st.text_input("Entrez un mot de passe à tester :", type="password", key="pwd_input")
     
     if st.button("Analyser le mot de passe", key="btn_pwd"):
         if pwd:
             with st.spinner("Analyse cryptographique en cours..."):
                 try:
-                    # Préparation des données dans le corps (Body) de la requête JSON
                     payload = {
                         "pwd": pwd,
                         "lang": "Français"
                     }
                     
-                    # Exécution de la requête POST (Le mot de passe ne transite plus dans l'URL)
                     response = requests.post(
                         f"{BASE_URL}/audit", 
                         json=payload, 
                         headers=headers
                     )
                     
-                    # Traitement de la réponse de l'API
                     if response.status_code == 200:
                         data = response.json()
                         score = data["score"]
@@ -78,16 +66,11 @@ with tab1:
                             if leaks > 0: st.error("🚨 Mot de passe compromis !")
                             else: st.success("✅ Aucun tag de fuite")
                         
-                        # Recommandations enrichies
                         st.markdown("---")
                         st.markdown("#### 💡 Recommandations CyberBrain")
                         
-                        # Option 1 : La Passphrase mémorisable
                         st.info(f"**Option A (Facile à retenir) :** `{data['recommendation']['passphrase_suggestion']}`")
-                        
-                        # Option 2 : Le mot de passe ultra-complexe (Caractères divers)
                         st.success(f"**Option B (Sécurité maximale) :** `{data['recommendation']['random_token']}`")
-                        
                         st.caption("L'Option A utilise une logique Diceware hybride idéale pour vos comptes du quotidien. L'Option B est un jeton hautement diversifié (symboles, chiffres, casses) parfait pour un gestionnaire de mots de passe.")
                         
                     elif response.status_code == 429:
@@ -103,7 +86,7 @@ with tab1:
 # ONGLET 2 : AUDIT FUITE EMAIL
 # ==========================================
 with tab2:
-    st.markdown("<h3 style='color: #2643B9;'>Détecteur de Violations d'Identité</h3>", unsafe_allow_html=True)
+    st.subheader("Détecteur de Violations d'Identité")
     email = st.text_input("Entrez votre adresse email :", placeholder="exemple@domaine.com", key="email_input")
     
     if st.button("Scanner les bases de données", key="btn_email"):
@@ -129,7 +112,6 @@ with tab2:
                             elif status == "clean":
                                 st.success(f"✅ Félicitations ! {data['message']}")
                                 st.balloons()
-                                
                             else:
                                 st.info(data["message"])
                                 
@@ -146,7 +128,7 @@ st.divider()
 st.caption("CyberBrain Security Suite v2.5 • Hardened Framework • Propriété de Yves-Pro")
 
 def afficher_ecran_auth(base_url, headers):
-    st.markdown("<h3 style='color: #9966CC;'>🔐 Accès au Coffre-fort CyberBrain</h3>", unsafe_allow_html=True)
+    st.subheader("🔐 Accès au Coffre-fort CyberBrain")
     
     choix_auth = st.radio("Que souhaitez-vous faire ?", ["Se connecter", "Créer un compte"], horizontal=True)
     
@@ -242,14 +224,12 @@ def afficher_coffre_fort(base_url, headers):
                         col1, col2, col3 = st.columns([2, 2, 1])
                         col1.markdown(f"**🌐 {compte['nom_site']}**\n*{compte['identifiant']}*")
                         
-                        # Génération d'une clé d'élément unique basée sur les chaînes de texte pour éviter les collisions
                         cle_unique = f"pwd_{compte['nom_site']}_{compte['identifiant']}"
                         col2.text_input("Mot de passe déchiffré :", value=compte['mot_de_passe'], type="password", key=cle_unique)
                         
                         if compte['url_site']:
                             col3.markdown(f"[Accéder au site]({compte['url_site']})")
                         
-                        # 🎨 AJOUT : Affichage dynamique de l'audit en temps réel sous la ligne
                         audit_status = compte.get("audit_result", "🔍 Non audité")
                         if "⚠️" in audit_status:
                             st.error(f"Statut : {audit_status}")
