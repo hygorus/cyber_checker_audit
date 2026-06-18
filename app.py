@@ -19,7 +19,12 @@ st.markdown("Protégez votre identité numérique grâce à notre audit de nivea
 
 # --- CONFIGURATION DE L'API ---
 BASE_URL = "https://cyber-checker-audit.onrender.com"
-API_KEY = os.getenv("CLE_API_INTERNE", "CLE-YVES-PRO")
+
+# ✅ APRÈS : Blindé contre les fuites sur GitHub
+API_KEY = os.getenv("CLE_API_INTERNE")
+
+if not API_KEY:
+    raise RuntimeError("🚨 ERREUR CRITIQUE : La variable d'environnement 'CLE_API_INTERNE' est introuvable. Arrêt de sécurité.")
 
 # En-tête global d'authentification pour l'API Gateway
 headers = {"X-API-KEY": API_KEY}
