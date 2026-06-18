@@ -51,11 +51,19 @@ init_db()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# 🔒 BLINDAGE DE SÉCURITÉ (A REPRENDRE DEPUIS TON CODE VULNÉRABLE)
+API_KEY = os.getenv("CLE_API_INTERNE")
+
+if not API_KEY:
+    raise RuntimeError("🚨 ERREUR CRITIQUE : La variable d'environnement 'CLE_API_INTERNE' est introuvable. Arrêt de sécurité.")
+
 API_KEY_NAME = "X-API-KEY"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 def get_authorized_keys():
-    keys_raw = os.getenv("ALLOWED_API_KEYS", "")
+    # Ici, si tu utilises "CLE_API_INTERNE" comme clé unique, 
+    # on s'assure qu'elle est bien chargée dans la liste des clés autorisées
+    keys_raw = os.getenv("ALLOWED_API_KEYS", API_KEY)  # Utilise la variable API_KEY sécurisée en repli interne
     return [k.strip() for k in keys_raw.split(",") if k.strip()]
 
 # ==========================================
