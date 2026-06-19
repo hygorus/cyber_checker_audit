@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Security, Depends, Request
 from fastapi.security.api_key import APIKeyHeader
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -29,12 +30,18 @@ logger = logging.getLogger("CyberBrainMonitor")
 # 2. CONFIGURATION DU RATE LIMITER (SLOWAPI)
 # ==========================================
 def get_real_user_ip(request: Request) -> str:
-    # Render transmet la vraie IP du visiteur dans cet en-tête
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        # On prend la première IP de la liste (au cas où il y en a plusieurs)
-        return forwarded.split(",")[0].strip()
-    # Si on est en local et que l'en-tête n'existe pas, on prend l'IP standard
+    # Render transmet toujours la VRAIE IP de l'utilisateur dans 'x-forwarded-for'
+    # S'il y a plusieurs IP (séparées par des virgules à cause d'un attaquant qui spoof), 
+    # la vraie IP de l'appelant direct est TOUJOURS la première ou la dernière selon le proxy.
+    # Sur Render, c'est généralement la première adresse de la liste.
+    
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        # On extrait la première IP propre de la liste et on ignore le reste
+        real_ip = forwarded_for.split(",")[0].strip()
+        return real_ip
+        
+    # Repli si pas de proxy (test local)
     return request.client.host if request.client else "127.0.0.1"
 
 # Remplace l'ancienne configuration par celle-ci
@@ -43,7 +50,23 @@ limiter = Limiter(key_func=get_real_user_ip)
 # ==========================================
 # 3. CONFIGURATION API ET PARAMÈTRES
 # ==========================================
-app = FastAPI(title="CyberBrain API Secure Pro")
+app = FastAPI(title="CyberBrain API Secure Pro", debug=False)
+
+logger = logging.getLogger("uvicorn.error")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # 1. On log l'erreur réelle en local sur Render pour que TOI tu puisses réparer le bug
+    logger.error(f"🚨 ERREUR INTERNE NON GÉRÉE sur {request.url.path} : {str(exc)}", exc_info=True)
+    
+    # 2. On renvoie une réponse totalement neutre et anonymisée au client/pirate
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "message": "Une erreur interne est survenue. L'incident a été enregistré par nos services de sécurité."
+        }
+    )
 
 # Déclenche la création des tables sur PostgreSQL (Supabase)
 init_db()
@@ -374,34 +397,42 @@ def connecter_utilisateur(request: Request, user: UserAuth, token: str = Depends
 
 @app.get("/admin/utilisateurs")
 def lister_utilisateurs_admin(admin_email: str, token: str = Depends(verify_api_key)):
-    """Route hautement sécurisée pour que Yves puisse voir les inscrits"""
-    # 🧠 VÉRIFICATION DU RÔLE / IDENTITÉ
-    YVES_EMAIL = os.getenv("ADMIN_EMAIL", "go6axe4nh@mozmail.com") # Mets ton vrai email ici
+    """Route hautement sécurisée réservée exclusivement à Yves"""
+    
+    # 1. On récupère la valeur officielle propre depuis l'environnement
+    YVES_EMAIL_OFFICIEL = os.getenv("ADMIN_EMAIL", "yves@cyber.pro").strip().lower()
+    
+    # 2. On normalise STRICTEMENT l'entrée fournie par la requête
+    email_fourni = admin_email.strip().lower()
+    
+    # 3. Comparaison mathématique à temps constant (évite le timing attack)
+    is_admin = secrets.compare_digest(email_fourni, YVES_EMAIL_OFFICIEL)
+    
+    if not is_admin:
+        logger.warning(f"🚨 TENTATIVE D'INTRUSION ADMIN : L'IP a essayé d'accéder avec l'email : {admin_email}")
+        raise HTTPException(
+            status_code=403, 
+            detail="Accès interdit : Droits administratifs insuffisants."
+        )
 
-    if admin_email.lower().strip() != YVES_EMAIL.lower().strip():
-        logger.warning(f"🚨 ACCÈS REFUSÉ : Tentative de lecture admin par {admin_email}")
-        raise HTTPException(status_code=403, detail="Accès interdit : Vous n'êtes pas l'administrateur de ce système.")
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, email, created_at FROM utilisateurs")
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+    # 4. Requête SQL (Plus besoin de try/except manuel, le global_exception_handler gère tout en cas de plantage)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, email, created_at FROM utilisateurs")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    utilisateurs = []
+    for row in rows:
+        utilisateurs.append({
+            "id": row[0],
+            "email": row[1],
+            "date_inscription": str(row[2])
+        })
         
-        utilisateurs = []
-        for row in rows:
-            utilisateurs.append({
-                "id": row[0],
-                "email": row[1],
-                "date_inscription": str(row[2])
-            })
-            
-        return {
-            "PROPRIÉTAIRE": "Yves-Pro",
-            "total_utilisateurs": len(utilisateurs),
-            "liste": utilisateurs
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "PROPRIÉTAIRE": "Yves-Pro",
+        "total_utilisateurs": len(utilisateurs),
+        "liste": utilisateurs
+    }
