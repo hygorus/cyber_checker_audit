@@ -10,7 +10,7 @@ import zxcvbn
 import os
 import string
 import logging
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from database import get_db_connection, init_db
 from crypto_utils import chiffrer_mot_de_passe, dechiffrer_mot_de_passe
 from auth_utils import hacher_mot_de_passe_maitre, verifier_mot_de_passe_maitre
@@ -113,7 +113,8 @@ class UserAuth(BaseModel):
     password: str
 
 class PasswordCheckInput(BaseModel):
-    pwd: str
+    # On force la validation Pydantic : minimum 1 caractère, maximum 128
+    pwd: str = Field(..., min_length=1, max_length=128)
     lang: str = "Français"
 
 
@@ -160,9 +161,6 @@ async def audit_password(request: Request, input_data: PasswordCheckInput, token
 
     pwd = input_data.pwd
     lang = input_data.lang
-
-    if len(pwd) > 128:
-        raise HTTPException(status_code=400, detail="Mot de passe trop long (max 128 car.)")
 
     analysis = zxcvbn.zxcvbn(pwd)
     score = analysis['score']
