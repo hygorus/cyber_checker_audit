@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Security, Depends, Request
+from fastapi import FastAPI, HTTPException, Security, Depends, Request, Header
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -11,10 +11,39 @@ import zxcvbn
 import os
 import string
 import logging
-from pydantic import BaseModel, Field
+import jwt
+from pydantic import BaseModel, Field, EmailStr
 from database import get_db_connection, init_db
 from crypto_utils import chiffrer_mot_de_passe, dechiffrer_mot_de_passe
 from auth_utils import hacher_mot_de_passe_maitre, verifier_mot_de_passe_maitre
+from datetime import datetime, timedelta
+
+
+# ==========================================
+# 0. CONFIGURATION DU JETON NUMERIQUE (JWT)
+# ==========================================
+JWT_SECRET = os.getenv("JWT_SECRET_KEY", "UNE-CLE-SUPER-SECRETE-A-CHANGER")
+JWT_ALGORITHM = "HS256" # Algorithme standard de hachage cryptographique
+
+
+# ==========================================
+# 🔒 SÉCURITÉ ET DÉPENDANCES (JWT)
+# ==========================================
+def verifier_jeton_session(authorization: str = Header(None)):
+    """Vérifie le jeton JWT fourni dans les en-têtes HTTP"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Session absente ou format invalide (Bearer requis).")
+        
+    token = authorization.split(" ")[1]
+    
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload["user_email"] 
+        
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Votre session a expiré. Veuillez vous reconnecter.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Session invalide ou corrompue.")
 
 # ==========================================
 # 1. CONFIGURATION DU MONITORING (LOGS)
@@ -125,15 +154,14 @@ def generer_hybride(langue="Français"):
 # 5. MODÈLES DE DONNÉES (PYDANTIC)
 # ==========================================
 class ItemCoffre(BaseModel):
-    user_id: int
     nom_site: str
     url_site: str
     identifiant: str
     mot_de_passe_a_stocker: str
 
 class UserAuth(BaseModel):
-    email: str
-    password: str
+    email: EmailStr  # 👈 TRÈS IMPORTANT : Force la validation stricte dès l'entrée
+    password: str = Field(..., min_length=8, max_length=64)
 
 class PasswordCheckInput(BaseModel):
     # On force la validation Pydantic : minimum 1 caractère, maximum 128
@@ -198,8 +226,8 @@ async def audit_password(request: Request, input_data: PasswordCheckInput, token
                 h, count = line.split(':')
                 if h == suffix: 
                     leaks = int(count)
-    except: 
-        pass
+    except Exception: 
+        pass # Tolérance aux pannes de l'API externe
 
     alphabet_secu = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
     mot_de_passe_aleatoire = "".join(secrets.choice(alphabet_secu) for _ in range(16))
@@ -214,30 +242,30 @@ async def audit_password(request: Request, input_data: PasswordCheckInput, token
         }
     }
 
+
 @app.get("/audit-email")
 @limiter.limit("5/minute")
-async def audit_email(request: Request, email: str, token: str = Depends(verify_api_key)):
-    # 1. Extraction de la vraie IP (via ton helper configuré pour Render)
+# 🧠 OWASP API6:2023 : On utilise le type EmailStr pour garantir que la chaîne est un email pur et dur (évite l'injection SSRF)
+async def audit_email(request: Request, email: EmailStr, token: str = Depends(verify_api_key)):
     real_ip = get_real_user_ip(request)
     
-    # 2. Affichage du log harmonisé dans la console Render
-    logger.info(f"📧 LOG: Un audit d'email ({email}) a été demandé depuis l'IP : {real_ip}")
+    # Normalisation stricte de l'entrée utilisateur
+    email_clean = email.lower().strip()
+    logger.info(f"📧 LOG: Un audit d'email ({email_clean}) a été demandé depuis l'IP : {real_ip}")
 
-    # 3. Validation du format de l'e-mail
-    if "@" not in email or "." not in email:
-        raise HTTPException(status_code=400, detail="Format d'email invalide.")
-
-    # 4. Interrogation du scanner de fuites
-    url = f"https://api.proxynova.com/v1/breach?email={email}"
+    # Interrogation du scanner de fuites avec des paramètres isolés
+    url = "https://api.proxynova.com/v1/breach"
     try:
-        res = requests.get(url, timeout=5)
+        # 🧠 OWASP API6:2023 : On passe l'email via le dictionnaire 'params' pour que 'requests' encode proprement l'URL
+        res = requests.get(url, params={"email": email_clean}, timeout=5) # 👈 Le timeout est obligatoire
+        
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "breached":
                 breaches = data.get("results", [])
                 return {
                     "status": "danger",
-                    "email": email,
+                    "email": email_clean,
                     "breach_count": len(breaches),
                     "details": breaches,
                     "message": f"Cet email apparaît dans {len(breaches)} fuites de données."
@@ -245,7 +273,7 @@ async def audit_email(request: Request, email: str, token: str = Depends(verify_
             else:
                 return {
                     "status": "clean",
-                    "email": email,
+                    "email": email_clean,
                     "breach_count": 0,
                     "details": [],
                     "message": "Aucune fuite détectée pour cet email."
@@ -253,52 +281,69 @@ async def audit_email(request: Request, email: str, token: str = Depends(verify_
         elif res.status_code == 404:
             return {
                 "status": "clean",
-                "email": email,
+                "email": email_clean,
                 "breach_count": 0,
                 "details": [],
                 "message": "Aucune fuite détectée pour cet email (0 breach)."
             }
         else:
-            return {"status": "error", "message": f"Le scanner alternatif a répondu avec le code {res.status_code}."}
+            return {"status": "error", "message": "Le scanner de vulnérabilités externe rencontre des difficultés."}
             
     except Exception as e:
-        return {"status": "error", "message": f"Erreur de connexion au scanner : {str(e)}"}
+        # 🧠 OWASP API8:2023 : On log l'erreur technique pour toi, mais on renvoie un texte neutre au client
+        logger.error(f"❌ Erreur de communication Proxynova : {str(e)}")
+        return {"status": "error", "message": "Le service de détection est temporairement indisponible."}
 
 
 @app.post("/coffre/ajouter")
-def ajouter_au_coffre(item: ItemCoffre, token: str = Depends(verify_api_key)):
-    # Sécurisation : Chiffrement AES-Fernet avant l'envoi vers la base
+def ajouter_au_coffre(item: ItemCoffre, user_email: str = Depends(verifier_jeton_session)):
+    """Route sécurisée par JWT : Ajoute un identifiant au coffre-fort de l'utilisateur connecté"""
+    
+    # 🧠 SÉCURITÉ CRYPTO : Chiffrement AES-Fernet avant traitement
     mdp_chiffre = chiffrer_mot_de_passe(item.mot_de_passe_a_stocker)
     
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        # 🧠 1. OWASP API1:2023 PROTECTION BOLA
+        # On récupère le VRAI id de l'utilisateur depuis son email extrait du jeton JWT cryptographique
+        cursor.execute("SELECT id FROM utilisateurs WHERE email = %s", (user_email.lower().strip(),))
+        user_row = cursor.fetchone()
+        
+        if not user_row:
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+            
+        real_user_id = user_row[0]
+        
+        # 🧠 2. Insertion stricte liée à l'ID interne authentifié (Le client ne choisit pas la cible)
         cursor.execute("""
             INSERT INTO coffre_fort (user_id, nom_site, url_site, identifiant, mot_de_passe_chiffre)
             VALUES (%s, %s, %s, %s, %s)
-        """, (item.user_id, item.nom_site, item.url_site, item.identifiant, mdp_chiffre))
+        """, (real_user_id, item.nom_site, item.url_site, item.identifiant, mdp_chiffre))
+        
         conn.commit()
+        return {"status": "success", "message": "Identifiant ajouté avec succès au coffre."}
+        
+    finally:
+        # 🔒 SÉCURITÉ RESSOURCE : Libération des canaux en BDD, succès ou échec.
         cursor.close()
         conn.close()
-        return {"status": "success", "message": "Identifiant ajouté avec succès au coffre."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur d'écriture BDD : {str(e)}")
 
 
 @app.get("/coffre/liste")
-def lister_le_coffre(user_email: str, token: str = Depends(verify_api_key)):
-    """Récupère, déchiffre et audite en temps réel les mots de passe de l'utilisateur authentifié"""
+def lister_le_coffre(user_email: str = Depends(verifier_jeton_session)):
+    # 🧠 SÉCURITÉ ABSOLUE : 'user_email' provient DIRECTEMENT du jeton chiffré décodé et validé par FastAPI.
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
         # 🧠 1. Sécurisation : Trouver l'ID utilisateur à partir de son email vérifié
         cursor.execute("SELECT id FROM utilisateurs WHERE email = %s", (user_email.lower().strip(),))
         user_row = cursor.fetchone()
         
         if not user_row:
-            cursor.close()
-            conn.close()
             raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
             
         real_user_id = user_row[0]
@@ -306,8 +351,6 @@ def lister_le_coffre(user_email: str, token: str = Depends(verify_api_key)):
         # 2. On utilise cet ID interne récupéré de manière sûre pour l'interrogation
         cursor.execute("SELECT nom_site, url_site, identifiant, mot_de_passe_chiffre FROM coffre_fort WHERE user_id = %s", (real_user_id,))
         rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
         
         coffre_dechiffre = []
         for row in rows:
@@ -328,9 +371,10 @@ def lister_le_coffre(user_email: str, token: str = Depends(verify_api_key)):
             
         return {"comptes": coffre_dechiffre}
         
-    except Exception as e:
-        if "HTTPException" in str(type(e)): raise e
-        raise HTTPException(status_code=500, detail=f"Erreur de lecture BDD : {str(e)}")
+    finally:
+        # 🔒 SÉCURITÉ RESSOURCE : Quoi qu'il arrive (succès ou erreur), la connexion est TOUJOURS fermée.
+        cursor.close()
+        conn.close()
 
 
 @app.post("/auth/inscription")
@@ -340,18 +384,16 @@ def inscrire_utilisateur(request: Request, user: UserAuth, token: str = Depends(
     hash_mdp = hacher_mot_de_passe_maitre(user.password)
     email_clean = user.email.lower().strip()
     
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Vérification d'existence
+        # 1. Vérification d'existence
         cursor.execute("SELECT id FROM utilisateurs WHERE email = %s", (email_clean,))
         if cursor.fetchone():
-            cursor.close()
-            conn.close()
             raise HTTPException(status_code=400, detail="Cet e-mail est déjà utilisé.")
 
-        # Insertion PostgreSQL avec récupération d'ID en direct
+        # 2. Insertion PostgreSQL avec récupération d'ID en direct
         cursor.execute("""
             INSERT INTO utilisateurs (email, master_password_hash)
             VALUES (%s, %s) RETURNING id;
@@ -359,80 +401,108 @@ def inscrire_utilisateur(request: Request, user: UserAuth, token: str = Depends(
 
         user_id = cursor.fetchone()[0]
         conn.commit()
+        
+        return {"status": "success", "user_id": user_id, "message": "Compte créé avec succès !"}
+        
+    finally:
+        # 🔒 OWASP PROTECTION RESSOURCE : Fermeture garantie de la BDD
         cursor.close()
         conn.close()
-        return {"status": "success", "user_id": user_id, "message": "Compte créé avec succès !"}
-    except Exception as e:
-        if "HTTPException" in str(type(e)): raise e
-        raise HTTPException(status_code=500, detail=f"Erreur d'inscription : {str(e)}")
 
 
 @app.post("/auth/connexion")
-@limiter.limit("5/minute") # 👈 Limite standard pour l'authentification
+@limiter.limit("5/minute")  # 👈 Limite standard pour l'authentification
 def connecter_utilisateur(request: Request, user: UserAuth, token: str = Depends(verify_api_key)):
     """Vérifie les identifiants et valide la connexion au coffre-fort"""
     email_clean = user.email.lower().strip()
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
         cursor.execute("SELECT id, master_password_hash FROM utilisateurs WHERE email = %s", (email_clean,))
         row = cursor.fetchone()
-        cursor.close()
-        conn.close()
         
         if not row:
+            # 🧠 OWASP API2:2023 : Message générique pour éviter l'énumération de comptes
             raise HTTPException(status_code=401, detail="Identifiants invalides.")
             
         user_id, hash_stocke = row[0], row[1]
         
         # Validation du mot de passe maître haché
         if verifier_mot_de_passe_maitre(user.password, hash_stocke):
-            return {"status": "success", "user_id": user_id, "message": "Connexion réussie !"}
+            
+            # 🧠 1. On prépare les données cryptographiques du badge de session
+            payload = {
+                "user_id": user_id,
+                "user_email": email_clean,
+                "exp": int((datetime.now(timezone.utc) + timedelta(minutes=60)).timestamp())
+            }
+            
+            # 🧠 2. On génère et signe le jeton
+            token_jwt = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+            
+            # 🧠 3. On retourne la réponse enrichie du JWT au frontend Streamlit
+            return {
+                "status": "success", 
+                "user_id": user_id, 
+                "access_token": token_jwt,
+                "message": "Connexion réussie !"
+            }
         else:
             raise HTTPException(status_code=401, detail="Identifiants invalides.")
-    except Exception as e:
-        if "HTTPException" in str(type(e)): raise e
-        raise HTTPException(status_code=500, detail=str(e))
+            
+    finally:
+        # 🔒 OWASP PROTECTION RESSOURCE : Fermeture garantie de la BDD
+        cursor.close()
+        conn.close()
 
 
 @app.get("/admin/utilisateurs")
-def lister_utilisateurs_admin(admin_email: str, token: str = Depends(verify_api_key)):
-    """Route hautement sécurisée réservée exclusivement à Yves"""
+def lister_utilisateurs_admin(current_user_email: str = Depends(verifier_jeton_session)):
+    """Route d'administration : Droits vérifiés cryptographiquement via le jeton JWT"""
     
-    # 1. On récupère la valeur officielle propre depuis l'environnement
-    YVES_EMAIL_OFFICIEL = os.getenv("ADMIN_EMAIL", "yves@cyber.pro").strip().lower()
+    # 🧠 1. Récupération de l'email officiel d'administration
+    YVES_EMAIL_OFFICIEL = os.getenv("ADMIN_EMAIL", "go6axe4nh@mozmail.com").strip().lower()
     
-    # 2. On normalise STRICTEMENT l'entrée fournie par la requête
-    email_fourni = admin_email.strip().lower()
+    # 🧠 2. Normalisation de l'email extrait du JWT (Impossible à falsifier par le client)
+    email_authentifie = current_user_email.strip().lower()
     
-    # 3. Comparaison mathématique à temps constant (évite le timing attack)
-    is_admin = secrets.compare_digest(email_fourni, YVES_EMAIL_OFFICIEL)
+    # 🧠 3. OWASP API5:2023 - Vérification stricte du niveau d'autorisation (BFLA)
+    # Comparaison mathématique à temps constant
+    is_admin = secrets.compare_digest(email_authentifie, YVES_EMAIL_OFFICIEL)
     
     if not is_admin:
-        logger.warning(f"🚨 TENTATIVE D'INTRUSION ADMIN : L'IP a essayé d'accéder avec l'email : {admin_email}")
+        # On loggue la tentative avec l'email de l'utilisateur qui a essayé de tricher
+        logger.warning(f"🚨 TENTATIVE D'INTRUSION ADMIN : L'utilisateur {current_user_email} a tenté d'accéder aux droits admin.")
         raise HTTPException(
             status_code=403, 
             detail="Accès interdit : Droits administratifs insuffisants."
         )
 
-    # 4. Requête SQL (Plus besoin de try/except manuel, le global_exception_handler gère tout en cas de plantage)
+    # 4. Requête SQL sécurisée
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, email, created_at FROM utilisateurs")
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
     
-    utilisateurs = []
-    for row in rows:
-        utilisateurs.append({
-            "id": row[0],
-            "email": row[1],
-            "date_inscription": str(row[2])
-        })
+    try:
+        cursor.execute("SELECT id, email, created_at FROM utilisateurs")
+        rows = cursor.fetchall()
         
-    return {
-        "PROPRIÉTAIRE": "Yves-Pro",
-        "total_utilisateurs": len(utilisateurs),
-        "liste": utilisateurs
-    }
+        utilisateurs = []
+        for row in rows:
+            utilisateurs.append({
+                "id": row[0],
+                "email": row[1],
+                "date_inscription": str(row[2])
+            })
+            
+        return {
+            "PROPRIÉTAIRE": "Yves-Pro",
+            "total_utilisateurs": len(utilisateurs),
+            "liste": utilisateurs
+        }
+        
+    finally:
+        # 🔒 PROTECTION RESSOURCE : Quoi qu'il arrive, on libère Supabase
+        cursor.close()
+        conn.close()
