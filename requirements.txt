@@ -37,7 +37,7 @@ toml==0.10.2
 watchdog==6.0.0
 
 # --- Sécurité, Chiffrement & Jetons (JWT) ---
-cryptography==42.0.5
+cryptography==48.0.1
 PyJWT==2.10.1
 slowapi==0.1.9
 zxcvbn==4.5.0
