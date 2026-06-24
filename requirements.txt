@@ -38,7 +38,7 @@ watchdog==6.0.0
 
 # --- Sécurité, Chiffrement & Jetons (JWT) ---
 cryptography==42.0.5
-PyJWT==2.10.1
+PyJWT==2.13.0
 slowapi==0.1.9
 zxcvbn==4.5.0
 email-validator>=2.0.0
