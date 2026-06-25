@@ -1,0 +1,15 @@
+fastapi==0.110.0
+uvicorn[standard]==0.46.0
+python-multipart==0.0.27
+anyio==4.13.0
+h11==0.16.0
+httptools==0.7.1
+websockets==16.0
+cryptography==42.0.5
+PyJWT==2.10.1
+slowapi==0.1.9
+zxcvbn==4.5.0
+email-validator>=2.0.0
+passlib[bcrypt]==1.7.4
+psycopg2-binary==2.9.9
+requests==2.33.1
