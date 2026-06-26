@@ -122,11 +122,9 @@ def get_authorized_keys():
 # 4. VÉRIFICATION ET TRAÇAGE DES CLÉS API
 # ==========================================
 async def verify_api_key(header_key: str = Depends(api_key_header)):
-    authorized_keys = get_authorized_keys()
-    is_valid = any(secrets.compare_digest(header_key or "", k) for k in authorized_keys)
-    
-    if is_valid:
-        masquage_cle = f"{header_key[:4]}****" if header_key else "INCONNUE"
+    # Sécurité absolue : On compare directement avec la variable d'environnement principale
+    if header_key and secrets.compare_digest(header_key, API_KEY):
+        masquage_cle = f"{header_key[:4]}****"
         logger.info(f"🔑 ACCÈS ACCORDÉ : La clé [{masquage_cle}] a validé une requête.")
         return header_key
         
