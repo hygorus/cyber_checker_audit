@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, EmailStr
 from database import get_db_connection, init_db
 from crypto_utils import chiffrer_mot_de_passe, dechiffrer_mot_de_passe
 from auth_utils import hacher_mot_de_passe_maitre, verifier_mot_de_passe_maitre
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 # ==========================================
