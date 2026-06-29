@@ -277,10 +277,52 @@ def afficher_coffre_fort(base_url, headers_api_globaux):
                             st.success(f"Statut : {audit_status}")
                         else:
                             st.info(f"Statut : {audit_status}")
-                            
+                        
+                        # 👇 INTEGRATION DES OPTIONS MODIFIER / SUPPRIMER ICI 👇
+                        id_item = compte.get("id") # Récupération de l'ID primaire depuis la bdd
+                        
+                        if id_item:
+                            col_b1, col_b2, _ = st.columns([1, 1, 2])
+                            with col_b1:
+                                btn_mod = st.button("📝 Modifier", key=f"btn_mod_{id_item}")
+                            with col_b2:
+                                btn_sup = st.button("🗑️ Supprimer", key=f"btn_sup_{id_item}")
+                                
+                            # Formulaire de modification dynamique
+                            if btn_mod:
+                                with st.form(key=f"form_mod_{id_item}"):
+                                    st.markdown(f"#### 📝 Modifier : {compte['nom_site']}")
+                                    nouveau_site = st.text_input("Nom du site", value=compte['nom_site'])
+                                    nouvel_user = st.text_input("Identifiant", value=compte['identifiant'])
+                                    nouveau_pass = st.text_input("Nouveau mot de passe", value=compte['mot_de_passe'], type="password")
+                                    
+                                    if st.form_submit_button("💾 Enregistrer"):
+                                        payload_edit = {"site": nouveau_site, "username": nouvel_user, "password": nouveau_pass}
+                                        res_edit = requests.put(f"{base_url}/coffre/modifier/{id_item}", json=payload_edit, headers=headers_requete)
+                                        if res_edit.status_code == 200:
+                                            st.success("Modifié !")
+                                            st.rerun()
+                                        else:
+                                            st.error("Échec de la modification.")
+                                            
+                            # Fenêtre de confirmation pour suppression
+                            if btn_sup:
+                                st.warning(f"⚠️ Confirmer la suppression définitive de {compte['nom_site']} ?")
+                                col_c1, col_c2 = st.columns(2)
+                                with col_c1:
+                                    if st.button("✔️ Oui, Supprimer", key=f"conf_sup_{id_item}"):
+                                        res_del = requests.delete(f"{base_url}/coffre/supprimer/{id_item}", headers=headers_requete)
+                                        if res_del.status_code == 200:
+                                            st.success("Supprimé !")
+                                            st.rerun()
+                                        else:
+                                            st.error("Erreur au serveur.")
+                                with col_c2:
+                                    st.button("❌ Annuler", key=f"cancel_{id_item}")
+
                         st.markdown("---")
                         
-        # 👈 CORRECTION ALIGNEMENT INDENTATION : Forcer la déconnexion UX propre si le JWT expire (401)
+        # Forcer la déconnexion UX propre si le JWT expire (401)
         elif res.status_code == 401:
             st.error("🔒 Votre session a expiré. Veuillez vous reconnecter.")
             st.session_state["logged_in"] = False
