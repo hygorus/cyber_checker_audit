@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Security, Depends, Request, Header
+from fastapi import FastAPI, HTTPException, Security, Depends, Request, Header, status
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -346,23 +346,25 @@ def lister_le_coffre(user_email: str = Depends(verifier_jeton_session)):
             
         real_user_id = user_row[0]
         
-        # 2. On utilise cet ID interne récupéré de manière sûre pour l'interrogation
-        cursor.execute("SELECT nom_site, url_site, identifiant, mot_de_passe_chiffre FROM coffre_fort WHERE user_id = %s", (real_user_id,))
+        # 👇 CHANGEMENT ICI : On ajoute "id" en premier dans la sélection SQL 👇
+        cursor.execute("SELECT id, nom_site, url_site, identifiant, mot_de_passe_chiffre FROM coffre_fort WHERE user_id = %s", (real_user_id,))
         rows = cursor.fetchall()
         
         coffre_dechiffre = []
         for row in rows:
             try:
-                mdp_clair = dechiffrer_mot_de_passe(row[3])
+                # 👇 LES INDICES ONT CHANGÉ : row[0] est l'id, donc le mot de passe chiffré est maintenant en row[4] 👇
+                mdp_clair = dechiffrer_mot_de_passe(row[4])
                 statut_audit = verifier_fuite_mot_de_passe(mdp_clair)
             except Exception:
                 mdp_clair = "[Erreur de déchiffrement]"
                 statut_audit = "❌ Erreur de clés"
                 
             coffre_dechiffre.append({
-                "nom_site": row[0],
-                "url_site": row[1],
-                "identifiant": row[2],
+                "id": row[0],          # 👈 ON ENVOIE L'ID AU FRONTEND ICI !
+                "nom_site": row[1],    # Décalé de row[0] à row[1]
+                "url_site": row[2],    # Décalé de row[1] à row[2]
+                "identifiant": row[3], # Décalé de row[2] à row[3]
                 "mot_de_passe": mdp_clair,
                 "audit_result": statut_audit
             })
@@ -373,7 +375,6 @@ def lister_le_coffre(user_email: str = Depends(verifier_jeton_session)):
         # 🔒 SÉCURITÉ RESSOURCE : Quoi qu'il arrive (succès ou erreur), la connexion est TOUJOURS fermée.
         cursor.close()
         conn.close()
-
 
 @app.post("/auth/inscription")
 @limiter.limit("3/minute") # 👈 Limite stricte pour la création de compte
@@ -452,6 +453,95 @@ def connecter_utilisateur(request: Request, user: UserAuth, token: str = Depends
             
     finally:
         # 🔒 OWASP PROTECTION RESSOURCE : Fermeture garantie de la BDD
+        cursor.close()
+        conn.close()
+
+
+@app.put("/coffre/modifier/{identifiant_id}", status_code=status.HTTP_200_OK)
+async def modifier_identifiant(
+    identifiant_id: int, 
+    payload: dict, 
+    user_email: str = Depends(verifier_jeton_session), # 👈 Correction du nom de la fonction
+    _ : str = Depends(verify_api_key)
+):
+    nouveau_site = payload.get("site")
+    nouvel_username = payload.get("username")
+    nouveau_password_clair = payload.get("password")
+    
+    if not nouveau_site or not nouvel_username or not nouveau_password_clair:
+        raise HTTPException(status_code=400, detail="Données incomplètes.")
+        
+    # Chiffrement conforme avec Fernet
+    nouveau_password_chiffre = chiffrer_mot_de_passe(nouveau_password_clair)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Protection BOLA : On cherche d'abord l'ID de l'utilisateur connecté via son email JWT
+        cursor.execute("SELECT id FROM utilisateurs WHERE email = %s", (user_email.lower().strip(),))
+        user_row = cursor.fetchone()
+        if not user_row:
+            raise HTTPException(status_code=44, detail="Utilisateur introuvable.")
+        real_user_id = user_row[0]
+        
+        # Requête SQL alignée sur tes vrais noms de colonnes : nom_site, identifiant, mot_de_passe_chiffre
+        cursor.execute(
+            """
+            UPDATE coffre_fort 
+            SET nom_site = %s, identifiant = %s, mot_de_passe_chiffre = %s 
+            WHERE id = %s AND user_id = %s
+            RETURNING id;
+            """,
+            (nouveau_site, nouvel_username, nouveau_password_chiffre, identifiant_id, real_user_id)
+        )
+        
+        updated_row = cursor.fetchone()
+        conn.commit()
+        
+        if not updated_row:
+            raise HTTPException(status_code=404, detail="Identifiant introuvable ou accès non autorisé.")
+            
+        return {"status": "success", "message": "Identifiant mis à jour avec succès !"}
+        
+    finally:
+        cursor.close()
+        conn.close()
+
+
+
+@app.delete("/coffre/supprimer/{identifiant_id}", status_code=status.HTTP_200_OK)
+async def supprimer_identifiant(
+    identifiant_id: int, 
+    user_email: str = Depends(verifier_jeton_session), # 👈 Correction ici aussi
+    _ : str = Depends(verify_api_key)
+):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Trouver l'ID utilisateur à partir de son email vérifié
+        cursor.execute("SELECT id FROM utilisateurs WHERE email = %s", (user_email.lower().strip(),))
+        user_row = cursor.fetchone()
+        if not user_row:
+            raise HTTPException(status_code=44, detail="Utilisateur introuvable.")
+        real_user_id = user_row[0]
+        
+        # Suppression sécurisée liée au propriétaire
+        cursor.execute(
+            "DELETE FROM coffre_fort WHERE id = %s AND user_id = %s RETURNING id;",
+            (identifiant_id, real_user_id)
+        )
+        
+        deleted_row = cursor.fetchone()
+        conn.commit()
+        
+        if not deleted_row:
+            raise HTTPException(status_code=404, detail="Identifiant introuvable ou accès non autorisé.")
+            
+        return {"status": "success", "message": "Identifiant supprimé définitivement."}
+        
+    finally:
         cursor.close()
         conn.close()
 
