@@ -11,7 +11,7 @@ if "user_id" not in st.session_state:
     st.session_state["user_id"] = None
 if "user_email" not in st.session_state:
     st.session_state["user_email"] = ""
-if "session_jwt" not in st.session_state:  # 👈 CORRECTION : Évite le KeyError au premier démarrage
+if "session_jwt" not in st.session_state:  
     st.session_state["session_jwt"] = None
 
 # Configuration de la page (Standard et propre)
@@ -23,6 +23,34 @@ st.markdown("Protégez votre identité numérique grâce à notre audit de nivea
 
 # --- CONFIGURATION DE L'API ---
 BASE_URL = "https://cyber-checker-audit.onrender.com"
+
+# 📋 Fonction utilitaire globale pour le bouton copier sans rechargement
+def composant_bouton_copier(texte_a_copier, element_id):
+    """Génère un bouton HTML/JS ultra-léger pour copier dans le presse-papier sans recharger Streamlit."""
+    html_code = f"""
+    <button id="btn_{element_id}" style="
+        width: 100%;
+        height: 38px;
+        background-color: #262730;
+        color: #FAFAFA;
+        border: 1px solid #464855;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.2s ease;
+    " onclick="
+        navigator.clipboard.writeText('{texte_a_copier}');
+        this.innerHTML = '📋 Copié !';
+        this.style.backgroundColor = '#1c6337';
+        this.style.borderColor = '#238636';
+        setTimeout(() => {{
+            this.innerHTML = '📋 Copier';
+            this.style.backgroundColor = '#262730';
+            this.style.borderColor = '#464855';
+        }}, 2000);
+    ">📋 Copier</button>
+    """
+    return st.html(html_code)
 
 # Blindé contre les fuites sur GitHub
 API_KEY = os.getenv("CLE_API_INTERNE")
@@ -41,9 +69,8 @@ def afficher_panneau_admin(base_url):
     st.caption("Réservé exclusivement à l'administrateur. Autorisation validée par signature cryptographique (JWT).")
     
     if st.button("🔄 Charger la liste des utilisateurs"):
-        with st.spinner("Interrogation de la base de données..."):
+        with st.status("Interrogation de la base de données sécurisée...", expanded=True) as status:
             try:
-                # Configuration des headers sécurisés avec le JWT
                 headers_admin = {
                     "X-API-KEY": API_KEY,
                     "Authorization": f"Bearer {st.session_state['session_jwt']}"
@@ -53,15 +80,16 @@ def afficher_panneau_admin(base_url):
                 
                 if res.status_code == 200:
                     data = res.json()
+                    status.update(label="Données d'administration chargées !", state="complete", expanded=False)
                     st.success(f"Données récupérées avec succès. Propriétaire : {data.get('PROPRIÉTAIRE', 'Admin')}")
                     st.metric("Total des utilisateurs inscrits", data.get("total_utilisateurs", 0))
-                    
-                    # Affichage sous forme de tableau propre
                     st.dataframe(data.get("liste", []), use_container_width=True)
                 else:
-                    st.error(f"🛑 Accès refusé par le serveur API (Code {res.status_code})")
+                    status.update(label="Accès refusé", state="error", expanded=True)
+                    st.error(f"🛑 Accès refusé par le serveur API (Code {res.status_code}). Privilèges insuffisants.", icon="🔒")
             except Exception as e:
-                st.error(f"Erreur de communication : {e}")
+                status.update(label="Erreur de liaison", state="error", expanded=True)
+                st.error("**Le serveur distant ne répond pas.** Veuillez vérifier la configuration de votre clé d'API.", icon="🚨")
 
 # ==========================================
 # 3. HUB D'AUDIT PUBLIC (MOT DE PASSE & EMAIL)
@@ -69,14 +97,14 @@ def afficher_panneau_admin(base_url):
 def afficher_hub_public():
     tab1, tab2 = st.tabs(["🔒 Audit Mot de Passe", "📧 Audit Fuite Email"])
 
-    # --- ONGLET 1 : AUDIT MOT DE PASSE ---
+    # --- ONGLET 1 (AUDIT MOT DE PASSE) ---
     with tab1:
         st.subheader("Analyseur de Robustesse")
         pwd = st.text_input("Entrez un mot de passe à tester :", type="password", key="pwd_input")
         
         if st.button("Analyser le mot de passe", key="btn_pwd"):
             if pwd:
-                with st.spinner("Analyse cryptographique en cours..."):
+                with st.status("Analyse cryptographique et vérification des fuites en cours...", expanded=True) as status:
                     try:
                         payload = {"pwd": pwd, "lang": "Français"}
                         response = requests.post(f"{BASE_URL}/audit", json=payload, headers=headers)
@@ -85,36 +113,44 @@ def afficher_hub_public():
                             data = response.json()
                             score = data["score"]
                             leaks = data["pwned_leaks"]
+                            status.update(label="Analyse terminated avec succès !", state="complete", expanded=False)
+                            
+                            if leaks > 0:
+                                st.error(f"**Alerte critique : Ce mot de passe a été détecté dans {leaks} fuites de données publiques !** Il est totalement compromis.", icon="⚠️")
+                            else:
+                                if score >= 3:
+                                    st.success("**Mot de passe hautement sécurisé.** Aucune vulnérabilité ou fuite détectée.", icon="🛡️")
+                                else:
+                                    st.warning("**Mot de passe intègre (0 fuite) mais trop faible.** Suivez nos recommandations ci-dessous pour le renforcer.", icon="💡")
                             
                             col1, col2 = st.columns(2)
                             with col1:
                                 st.metric("Score d'Entropie", f"{score}/4")
-                                if score < 2: st.error("⚠️ Trop vulnérable !")
-                                elif score < 4: st.warning("⚠️ Robustesse moyenne")
-                                else: st.success("✅ Excellent niveau")
-                                
                             with col2:
                                 st.metric("Fuites publiques", f"{leaks} fois")
-                                if leaks > 0: st.error("🚨 Mot de passe compromis !")
-                                else: st.success("✅ Aucun tag de fuite")
                             
                             st.markdown("---")
                             st.markdown("#### 💡 Recommandations CyberBrain")
-                            
                             st.info(f"**Option A (Facile à retenir) :** `{data['recommendation']['passphrase_suggestion']}`")
                             st.success(f"**Option B (Sécurité maximale) :** `{data['recommendation']['random_token']}`")
                             st.caption("L'Option A utilise une logique Diceware hybride idéale pour vos comptes du quotidien. L'Option B est un jeton hautement diversifié parfait pour un gestionnaire de mots de passe.")
                             
+                        elif response.status_code == 403:
+                            status.update(label="Accès refusé", state="error", expanded=True)
+                            st.error("**Clé d'API invalide ou manquante.** Le serveur rejette l'analyse.", icon="🔒")
                         elif response.status_code == 429:
-                            st.error("🛑 Rate Limit activé : Trop de requêtes. Attendez une minute.")
+                            status.update(label="Serveur surchargé", state="error", expanded=True)
+                            st.error("🛑 Limite de requêtes atteinte : Trop de vérifications simultanées. Veuillez patienter une minute.", icon="⏳")
                         else:
-                            st.error(f"Erreur technique (API) : {response.status_code}")
-                    except Exception as e:
-                        st.error(f"Connexion au serveur impossible : {e}")
+                            status.update(label="Échec de l'analyse", state="error", expanded=True)
+                            st.error(f"Erreur technique de transmission (Code {response.status_code}).")
+                    except Exception:
+                        status.update(label="Erreur réseau", state="error", expanded=True)
+                        st.error("**Échec de communication avec le serveur d'audit.** Vérifiez votre connexion ou la configuration de l'application.", icon="🚨")
             else:
                 st.warning("Veuillez saisir un mot de passe avant de lancer l'analyse.")
 
-    # --- ONGLET 2 : AUDIT FUITE EMAIL ---
+    # --- ONGLET 2 (AUDIT FUITE EMAIL) ---
     with tab2:
         st.subheader("Détecteur de Violations d'Identité")
         email = st.text_input("Entrez votre adresse email :", placeholder="exemple@domaine.com", key="email_input")
@@ -122,40 +158,47 @@ def afficher_hub_public():
         if st.button("Scanner les bases de données", key="btn_email"):
             if email:
                 if "@" not in email or "." not in email:
-                    st.error("Le format de l'adresse email semble incorrect.")
+                    st.error("Le format de l'adresse email semble incorrect.", icon="📧")
                 else:
-                    with st.spinner("Recherche dans les archives de fuites..."):
+                    with st.status("Scan mondial des archives de piratages en cours...", expanded=True) as status:
                         try:
                             response = requests.get(f"{BASE_URL}/audit-email", headers=headers, params={"email": email})
                             
                             if response.status_code == 200:
                                 data = response.json()
-                                status = data["status"]
+                                status_api = data["status"]
+                                status.update(label="Scan de sécurité finalisé.", state="complete", expanded=False)
                                 
-                                if status == "danger":
-                                    st.error(f"🚨 Alerte : {data['message']}")
+                                if status_api == "danger":
+                                    st.error(f"**Violation détectée :** {data['message']}", icon="🚨")
                                     st.markdown("#### Sites impliqués dans le piratage :")
                                     for breach in data["details"]:
                                         st.write(f"• **{breach}**")
-                                    st.warning("👉 Action requise : Changez immédiatement les mots de passe des sites mentionnés.")
+                                    st.warning("👉 **Action requise :** Changez immédiatement les mots de passe des sites mentionnés pour stopper le piratage de vos accès.")
                                 
-                                elif status == "clean":
-                                    st.success(f"✅ Félicitations ! {data['message']}")
+                                elif status_api == "clean":
+                                    st.success(f"**Excellente nouvelle !** {data['message']}", icon="✅")
                                     st.balloons()
                                 else:
                                     st.info(data["message"])
                                     
+                            elif response.status_code == 403:
+                                status.update(label="Échec de l'authentification", state="error", expanded=True)
+                                st.error("**Clé d'API invalide ou manquante.** Le serveur rejette l'analyse.", icon="🔒")
                             elif response.status_code == 429:
-                                st.error("🛑 Rate Limit activé : Trop de requêtes. Attendez une minute.")
+                                status.update(label="Serveur surchargé", state="error", expanded=True)
+                                st.error("🛑 Trop de requêtes de scan envoyées. Attendez une minute.", icon="⏳")
                             else:
+                                status.update(label="Erreur inconnue", state="error", expanded=True)
                                 st.error(f"Erreur technique (API) : {response.status_code}")
-                        except Exception as e:
-                            st.error(f"Connexion au serveur impossible : {e}")
+                        except Exception:
+                            status.update(label="Échec du scan", state="error", expanded=True)
+                            st.error("**Connexion au serveur de base de données compromise.** Réessayez ultérieurement.", icon="🚨")
             else:
                 st.warning("Veuillez entrer une adresse email à analyser.")
 
 # ==========================================
-# 4. CRÉATION DE COMPTE / ÉCRAN DE CONNEXION
+# 4. ÉCRAN D'AUTHENTIFICATION RASSURANT
 # ==========================================
 def afficher_ecran_auth(base_url, headers_api_globaux):
     st.subheader("🔐 Accès au Coffre-fort CyberBrain")
@@ -163,41 +206,52 @@ def afficher_ecran_auth(base_url, headers_api_globaux):
     choix_auth = st.radio("Que souhaitez-vous faire ?", ["Se connecter", "Créer un compte"], horizontal=True)
     
     with st.form(key="formulaire_authentification"):
-        email = st.text_input("Adresse e-mail :")
-        password = st.text_input("Mot de passe maître :", type="password")
+        email = st.text_input("Adresse e-mail :", placeholder="nom@exemple.com")
+        password = st.text_input("Mot de passe maître :", type="password", placeholder="••••••••••••")
         
         texte_bouton = "S'authentifier" if choix_auth == "Se connecter" else "Créer mon compte sécurisé"
-        soumis = st.form_submit_button(label=texte_bouton)
+        soumis = st.form_submit_button(label=texte_bouton, use_container_width=True)
         
     if soumis:
         if email and password:
             if choix_auth == "Se connecter":
-                try:
-                    payload = {"email": email, "password": password}
-                    response = requests.post(f"{base_url}/auth/connexion", json=payload, headers=headers_api_globaux)
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        st.session_state["logged_in"] = True
-                        st.session_state["session_jwt"] = data["access_token"]
-                        st.session_state["user_email"] = email.strip().lower()
-                        st.rerun()  # Redirection instantanée vers le coffre déverrouillé
-                    else:
-                        st.error(f"❌ Échec de la connexion : {response.json().get('detail')}")
-                except Exception as e:
-                    st.error(f"Erreur de communication avec l'API : {e}")
+                with st.status("Chiffrement local et validation de vos accès...", expanded=True) as status:
+                    try:
+                        payload = {"email": email, "password": password}
+                        response = requests.post(f"{base_url}/auth/connexion", json=payload, headers=headers_api_globaux)
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            status.update(label="Identité confirmée !", state="complete", expanded=False)
+                            st.session_state["logged_in"] = True
+                            st.session_state["session_jwt"] = data["access_token"]
+                            st.session_state["user_email"] = email.strip().lower()
+                            st.rerun()
+                        elif response.status_code in [401, 403]:
+                            status.update(label="Accès refusé", state="error", expanded=True)
+                            st.error("**Identifiants incorrects ou accès refusé.** Par mesure de sécurité, veuillez vérifier vos accès.", icon="🔒")
+                        else:
+                            status.update(label="Erreur d'authentification", state="error", expanded=True)
+                            st.error("**Le serveur distant a rencontré un problème.** Nos équipes ont été notifiées.", icon="🚨")
+                    except Exception:
+                        status.update(label="Panne de réseau", state="error", expanded=True)
+                        st.error("**Erreur de communication avec l'API.** Impossible de joindre le serveur de clés.", icon="🚨")
                     
             else:  # Créer un compte
-                try:
-                    payload = {"email": email, "password": password}
-                    response = requests.post(f"{base_url}/auth/inscription", json=payload, headers=headers_api_globaux)
-                    
-                    if response.status_code == 200:
-                        st.success("🚀 Compte créé avec succès ! Vous pouvez maintenant basculer sur 'Se connecter'.")
-                    else:
-                        st.error(f"❌ Erreur lors de l'inscription : {response.json().get('detail')}")
-                except Exception as e:
-                    st.error(f"Erreur : {e}")
+                with st.status("Création de votre environnement cryptographique dédié...", expanded=True) as status:
+                    try:
+                        payload = {"email": email, "password": password}
+                        response = requests.post(f"{base_url}/auth/inscription", json=payload, headers=headers_api_globaux)
+                        
+                        if response.status_code == 200:
+                            status.update(label="Espace créé avec succès !", state="complete", expanded=False)
+                            st.success("🚀 **Compte créé avec succès !** Vous pouvez maintenant basculer sur l'option 'Se connecter' ci-dessus.", icon="✅")
+                        else:
+                            status.update(label="Échec de la création", state="error", expanded=True)
+                            st.error(f"❌ **Erreur d'inscription :** {response.json().get('detail', 'Cet email est probablement déjà utilisé.')}")
+                    except Exception:
+                        status.update(label="Erreur réseau", state="error", expanded=True)
+                        st.error("**Impossible de joindre le service d'inscription.**", icon="🚨")
         else:
             st.warning("Veuillez remplir tous les champs.")
 
@@ -207,7 +261,7 @@ def afficher_ecran_auth(base_url, headers_api_globaux):
 def afficher_coffre_fort(base_url, headers_api_globaux):
     st.markdown(f"### 🧠 Votre Coffre-fort Sécurisé (`{st.session_state['user_email']}`)")
     
-    if st.button("🚪 Se déconnecter"):
+    if st.button("🚪 Se déconnecter", use_container_width=True):
         st.session_state["logged_in"] = False
         st.session_state["session_jwt"] = None
         st.session_state["user_email"] = ""
@@ -224,26 +278,33 @@ def afficher_coffre_fort(base_url, headers_api_globaux):
         
         if st.button("Chiffrer et sauvegarder"):
             if nom_site and identifiant and mdp:
-                headers_requete = {
-                    "X-API-KEY": API_KEY,
-                    "Authorization": f"Bearer {st.session_state['session_jwt']}"
-                }
-                payload = {
-                    "nom_site": nom_site,
-                    "url_site": url_site,
-                    "identifiant": identifiant,
-                    "mot_de_passe_a_stocker": mdp
-                }
-                res = requests.post(f"{base_url}/coffre/ajouter", json=payload, headers=headers_requete)
-                if res.status_code == 200:
-                    st.success("✅ Identifiant ajouté avec succès au coffre.")
-                    st.rerun()
-                else:
-                    st.error("Erreur lors de la sauvegarde.")
+                with st.status("Chiffrement asymétrique Fernet et transfert sécurisé...", expanded=True) as status:
+                    try:
+                        headers_requete = {
+                            "X-API-KEY": API_KEY,
+                            "Authorization": f"Bearer {st.session_state['session_jwt']}"
+                        }
+                        payload = {
+                            "nom_site": nom_site,
+                            "url_site": url_site,
+                            "identifiant": identifiant,
+                            "mot_de_passe_a_stocker": mdp
+                        }
+                        res = requests.post(f"{base_url}/coffre/ajouter", json=payload, headers=headers_requete)
+                        if res.status_code == 200:
+                            status.update(label="Enregistré !", state="complete", expanded=False)
+                            st.success("✅ Identifiant ajouté avec succès au coffre.")
+                            st.rerun()
+                        else:
+                            status.update(label="Échec du chiffrement", state="error", expanded=True)
+                            st.error("Erreur lors de la sauvegarde sur le serveur.")
+                    except Exception:
+                        status.update(label="Erreur réseau", state="error", expanded=True)
+                        st.error("Impossible de joindre le coffre-fort.")
             else:
                 st.warning("Veuillez remplir les champs obligatoires.")
 
-    # --- SECTION B : VISUALISER LES ÉLÉMENTS ---
+    # --- SECTION B : VISUALISER LES ÉLÉMENTS (RÉ-INDENTÉE ICI DANS LA FONCTION) ---
     st.markdown("#### 🔑 Vos identifiants enregistrés")
     try:
         headers_requete = {
@@ -258,28 +319,39 @@ def afficher_coffre_fort(base_url, headers_api_globaux):
             if not comptes:
                 st.info("Votre coffre-fort est vide pour le moment.")
             else:
-                # Utilisation de l'index d'énumération pour sécuriser l'unicité des clés Streamlit
                 for idx, compte in enumerate(comptes):
                     with st.container():
-                        col1, col2, col3 = st.columns([2, 2, 1])
+                        # 📐 Définition des 4 colonnes pour intégrer le bouton Copier proprement
+                        col1, col2, col_copie, col3 = st.columns([2, 2, 1, 1])
+                        
+                        # Colonne 1 : Site et Identifiant
                         col1.markdown(f"**🌐 {compte['nom_site']}**\n*{compte['identifiant']}*")
                         
+                        # Colonne 2 : Saisie de mot de passe masqué
                         cle_unique = f"pwd_{idx}_{compte['nom_site']}"
-                        col2.text_input("Mot de passe déchiffré :", value=compte['mot_de_passe'], type="password", key=cle_unique)
+                        col2.text_input("Mot de passe déchiffré :", value=compte['mot_de_passe'], type="password", key=cle_unique, label_visibility="collapsed")
                         
-                        if compte['url_site']:
-                            col3.markdown(f"[Accéder au site]({compte['url_site']})")
+                        # 📋 Colonne Copie : Appel du bouton JavaScript instantané
+                        with col_copie:
+                            composant_bouton_copier(compte['mot_de_passe'], f"copy_{idx}")
                         
+                        # Colonne 3 : Lien d'accès
+                        with col3:
+                            if compte['url_site']:
+                                st.markdown(f"[Accéder]({compte['url_site']})")
+                        
+                        # Bandeaux d'état élégants
                         audit_status = compte.get("audit_result", "🔍 Non audité")
-                        if "⚠️" in audit_status:
-                            st.error(f"Statut : {audit_status}")
+                        if "❌" in audit_status or "Erreur" in audit_status:
+                            st.error(f"Alerte coffre : {audit_status}", icon="🔑")
+                        elif "⚠️" in audit_status:
+                            st.error(f"Statut d'audit : {audit_status}", icon="⚠️")
                         elif "✅" in audit_status:
-                            st.success(f"Statut : {audit_status}")
+                            st.success(f"Statut d'audit : {audit_status}", icon="🛡️")
                         else:
                             st.info(f"Statut : {audit_status}")
                         
-                        # 👇 INTEGRATION DES OPTIONS MODIFIER / SUPPRIMER ICI 👇
-                        id_item = compte.get("id") # Récupération de l'ID primaire depuis la bdd
+                        id_item = compte.get("id")
                         
                         if id_item:
                             col_b1, col_b2, _ = st.columns([1, 1, 2])
@@ -288,7 +360,6 @@ def afficher_coffre_fort(base_url, headers_api_globaux):
                             with col_b2:
                                 btn_sup = st.button("🗑️ Supprimer", key=f"btn_sup_{id_item}")
                                 
-                            # Formulaire de modification dynamique
                             if btn_mod:
                                 with st.form(key=f"form_mod_{id_item}"):
                                     st.markdown(f"#### 📝 Modifier : {compte['nom_site']}")
@@ -305,7 +376,6 @@ def afficher_coffre_fort(base_url, headers_api_globaux):
                                         else:
                                             st.error("Échec de la modification.")
                                             
-                            # Fenêtre de confirmation pour suppression
                             if btn_sup:
                                 st.warning(f"⚠️ Confirmer la suppression définitive de {compte['nom_site']} ?")
                                 col_c1, col_c2 = st.columns(2)
@@ -322,15 +392,14 @@ def afficher_coffre_fort(base_url, headers_api_globaux):
 
                         st.markdown("---")
                         
-        # Forcer la déconnexion UX propre si le JWT expire (401)
         elif res.status_code == 401:
-            st.error("🔒 Votre session a expiré. Veuillez vous reconnecter.")
+            st.error("🔒 Votre session a expiré. Pour votre sécurité, veuillez vous reconnecter.", icon="🔒")
             st.session_state["logged_in"] = False
             st.session_state["session_jwt"] = None
             st.session_state["user_email"] = ""
             st.rerun()
         else:
-            st.error("Impossible d'accéder au coffre-fort (Erreur serveur).")
+            st.error("Impossible d'accéder au coffre-fort (Erreur de validation de clé sur Render).", icon="🚨")
     except Exception as e:
         st.error(f"Erreur de réseau : {e}")
 
@@ -339,12 +408,10 @@ def afficher_coffre_fort(base_url, headers_api_globaux):
 # ==========================================
 st.sidebar.title("🧭 Navigation CyberBrain")
 
-# Récupération dynamique de l'email d'administration depuis l'environnement (ou repli par défaut)
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "yves@cyber.pro").strip().lower()
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "go6axe4nh@mozmail.com").strip().lower()
 
 liste_choix = ["🛡️ Hub d'Audit Public", "🔐 Mon Coffre-fort"]
 
-# Contrôle d'affichage conditionnel pour l'espace d'administration
 if st.session_state["logged_in"] and st.session_state["user_email"] == ADMIN_EMAIL:
     liste_choix.append("👨‍💻 Panneau Admin")
 
