@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Request, Header
+from fastapi import FastAPI, HTTPException, Depends, Request, Header, Path
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,14 +20,14 @@ from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
 # ==========================================
-# 0. LOGS EN PREMIER - AVANT TOUTE UTILISATION
+# 0. LOGS EN PREMIER
 # ==========================================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(levelname)s] - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-logger = logging.getLogger("uvicorn.error") # <-- LOGGER DEFINI AVANT LIFESPAN
+logger = logging.getLogger("uvicorn.error")
 
 # ==========================================
 # 1. CONFIG DB + JWT + ADMIN
@@ -39,8 +39,8 @@ if not DATABASE_URL:
 JWT_SECRET = os.getenv("JWT_SECRET_KEY")
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET_KEY manquant")
-JWT_ALGORITHM = "HS256"
 
+JWT_ALGORITHM = "HS256"
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "go6axe4nh@mozmail.com").strip().lower()
 
 # ==========================================
@@ -149,6 +149,19 @@ def verifier_jeton_session(authorization: str = Header(None)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Session invalide.")
 
+async def get_current_user_id(user_email: str = Depends(verifier_jeton_session)) -> int:
+    conn = await get_db_connection()
+    try:
+        user_row = await conn.fetchrow(
+            "SELECT id FROM utilisateurs WHERE email = $1",
+            user_email.lower().strip()
+        )
+        if not user_row:
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+        return user_row['id']
+    finally:
+        await conn.close()
+
 async def verifier_admin(user_email: str = Depends(verifier_jeton_session)) -> str:
     email_authentifie = user_email.strip().lower()
     if not secrets.compare_digest(email_authentifie, ADMIN_EMAIL):
@@ -189,6 +202,11 @@ class ItemCoffre(BaseModel):
     identifiant: str
     mot_de_passe_a_stocker: str
 
+class ItemCoffreUpdate(BaseModel):
+    nom_site: str
+    identifiant: str
+    mot_de_passe: str
+
 class UserAuth(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=64)
@@ -225,20 +243,22 @@ def verifier_fuite_mot_de_passe(mdp_clair: str) -> str:
 # ==========================================
 # 8. ROUTES ASYNC
 # ==========================================
-
 @app.post("/audit")
 @limiter.limit("5/minute")
 async def audit_password(request: Request, input_data: PasswordCheckInput, token: str = Depends(verify_api_key)):
     logger.info(f"🔐 Audit pwd IP: {get_real_user_ip(request)}")
     pwd, lang = input_data.pwd, input_data.lang
     score = zxcvbn.zxcvbn(pwd)['score']
-
     sha1 = hashlib.sha1(pwd.encode()).hexdigest().upper()
     leaks = 0
+
     try:
         res = requests.get(f"https://api.pwnedpasswords.com/range/{sha1[:5]}", timeout=5)
         if res.status_code == 200:
-            leaks = next((int(c) for h, c in (l.split(':') for l in res.text.splitlines()) if h == sha1[5:]), 0)
+            leaks = next(
+                (int(c) for h, c in (l.split(':') for l in res.text.splitlines()) if h == sha1[5:]),
+                0
+            )
     except Exception:
         pass
 
@@ -248,7 +268,10 @@ async def audit_password(request: Request, input_data: PasswordCheckInput, token
         "pwned_leaks": leaks,
         "recommendation": {
             "passphrase_suggestion": generer_hybride(lang),
-            "random_token": "".join(secrets.choice(string.ascii_letters + string.digits + "!@#$%^&*") for _ in range(16))
+            "random_token": "".join(
+                secrets.choice(string.ascii_letters + string.digits + "!@#$%^&*")
+                for _ in range(16)
+            )
         }
     }
 
@@ -257,6 +280,7 @@ async def audit_password(request: Request, input_data: PasswordCheckInput, token
 async def audit_email(request: Request, input_data: EmailCheckInput, token: str = Depends(verify_api_key)):
     email_clean = input_data.email.lower().strip()
     logger.info(f"📧 Audit email: {email_clean}")
+
     try:
         res = requests.get("https://api.proxynova.com/v1/breach", params={"email": email_clean}, timeout=5)
         if res.status_code == 200 and res.json().get("status") == "breached":
@@ -274,31 +298,25 @@ async def audit_email(request: Request, input_data: EmailCheckInput, token: str 
         return {"status": "error", "message": "Service indisponible."}
 
 @app.post("/coffre/ajouter")
-async def ajouter_au_coffre(item: ItemCoffre, user_email: str = Depends(verifier_jeton_session)):
+async def ajouter_au_coffre(item: ItemCoffre, user_id: int = Depends(get_current_user_id)):
     conn = await get_db_connection()
     try:
-        user_row = await conn.fetchrow("SELECT id FROM utilisateurs WHERE email = $1", user_email.lower().strip())
-        if not user_row:
-            raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
-
         await conn.execute(
             "INSERT INTO coffre_fort (user_id, nom_site, url_site, identifiant, mot_de_passe_chiffre) VALUES ($1, $2, $3, $4, $5)",
-            user_row['id'], item.nom_site, item.url_site, item.identifiant, chiffrer_mot_de_passe(item.mot_de_passe_a_stocker)
+            user_id, item.nom_site, item.url_site, item.identifiant, chiffrer_mot_de_passe(item.mot_de_passe_a_stocker)
         )
         return {"status": "success", "message": "Ajouté au coffre."}
     finally:
         await conn.close()
 
 @app.get("/coffre/liste")
-async def lister_le_coffre(user_email: str = Depends(verifier_jeton_session)):
+async def lister_le_coffre(user_id: int = Depends(get_current_user_id)):
     conn = await get_db_connection()
     try:
-        user_row = await conn.fetchrow("SELECT id FROM utilisateurs WHERE email = $1", user_email.lower().strip())
-        if not user_row:
-            raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
-
-        rows = await conn.fetch("SELECT id, nom_site, url_site, identifiant, mot_de_passe_chiffre FROM coffre_fort WHERE user_id = $1", user_row['id'])
-
+        rows = await conn.fetch(
+            "SELECT id, nom_site, url_site, identifiant, mot_de_passe_chiffre FROM coffre_fort WHERE user_id = $1",
+            user_id
+        )
         coffre = []
         for row in rows:
             try:
@@ -319,6 +337,50 @@ async def lister_le_coffre(user_email: str = Depends(verifier_jeton_session)):
     finally:
         await conn.close()
 
+# ==========================================
+# 8.1 ROUTES CRUD : MODIFIER + SUPPRIMER
+# ==========================================
+@app.put("/coffre/modifier/{item_id}")
+async def modifier_coffre(
+    item_id: int = Path(..., ge=1),
+    item: ItemCoffreUpdate =...,
+    user_id: int = Depends(get_current_user_id)
+):
+    conn = await get_db_connection()
+    try:
+        row = await conn.fetchrow(
+            "SELECT id FROM coffre_fort WHERE id = $1 AND user_id = $2",
+            item_id, user_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Item introuvable ou accès refusé.")
+
+        mdp_chiffre = chiffrer_mot_de_passe(item.mot_de_passe)
+        await conn.execute(
+            "UPDATE coffre_fort SET nom_site = $1, identifiant = $2, mot_de_passe_chiffre = $3 WHERE id = $4",
+            item.nom_site, item.identifiant, mdp_chiffre, item_id
+        )
+        return {"status": "success", "message": "Item modifié."}
+    finally:
+        await conn.close()
+
+@app.delete("/coffre/supprimer/{item_id}")
+async def supprimer_coffre(item_id: int = Path(..., ge=1), user_id: int = Depends(get_current_user_id)):
+    conn = await get_db_connection()
+    try:
+        res = await conn.execute(
+            "DELETE FROM coffre_fort WHERE id = $1 AND user_id = $2",
+            item_id, user_id
+        )
+        if res == "DELETE 0":
+            raise HTTPException(status_code=404, detail="Item introuvable ou accès refusé.")
+        return {"status": "success", "message": "Item supprimé."}
+    finally:
+        await conn.close()
+
+# ==========================================
+# 9. AUTH + ADMIN
+# ==========================================
 @app.post("/auth/inscription")
 @limiter.limit("3/minute")
 async def inscrire_utilisateur(request: Request, user: UserAuth, token: str = Depends(verify_api_key)):
@@ -340,7 +402,10 @@ async def inscrire_utilisateur(request: Request, user: UserAuth, token: str = De
 async def connecter_utilisateur(request: Request, user: UserAuth, token: str = Depends(verify_api_key)):
     conn = await get_db_connection()
     try:
-        row = await conn.fetchrow("SELECT id, master_password_hash FROM utilisateurs WHERE email = $1", user.email.lower().strip())
+        row = await conn.fetchrow(
+            "SELECT id, master_password_hash FROM utilisateurs WHERE email = $1",
+            user.email.lower().strip()
+        )
         if not row or not verifier_mot_de_passe_maitre(user.password, row['master_password_hash']):
             raise HTTPException(status_code=401, detail="Identifiants invalides.")
 
@@ -358,9 +423,6 @@ async def connecter_utilisateur(request: Request, user: UserAuth, token: str = D
     finally:
         await conn.close()
 
-# ==========================================
-# 9. ROUTE ADMIN CORRIGEE
-# ==========================================
 @app.get("/admin/utilisateurs")
 async def lister_utilisateurs_admin(admin_email: str = Depends(verifier_admin)):
     conn = await get_db_connection()
