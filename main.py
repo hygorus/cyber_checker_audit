@@ -41,7 +41,10 @@ if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET_KEY manquant")
 
 JWT_ALGORITHM = "HS256"
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "go6axe4nh@mozmail.com").strip().lower()
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+
+if not ADMIN_EMAIL:
+    raise RuntimeError("ADMIN_EMAIL manquant")
 
 # ==========================================
 # 2. DB UTILS ASYNC
