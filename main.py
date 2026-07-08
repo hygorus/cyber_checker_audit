@@ -1,3 +1,8 @@
+from auth_utils import (
+    hacher_mot_de_passe_maitre,
+    verifier_mot_de_passe_maitre,
+    hash_a_besoin_d_etre_mis_a_jour,
+)
 from fastapi import FastAPI, HTTPException, Depends, Request, Header, Path
 from fastapi.security.api_key import APIKeyHeader
 from fastapi.responses import JSONResponse
@@ -15,7 +20,6 @@ import jwt
 import asyncpg
 from pydantic import BaseModel, Field, EmailStr
 from crypto_utils import chiffrer_mot_de_passe, dechiffrer_mot_de_passe
-from auth_utils import hacher_mot_de_passe_maitre, verifier_mot_de_passe_maitre
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
