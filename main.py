@@ -18,6 +18,7 @@ import string
 import logging
 import jwt
 import asyncpg
+import ssl
 from pydantic import BaseModel, Field, EmailStr
 from crypto_utils import chiffrer_mot_de_passe, dechiffrer_mot_de_passe
 from datetime import datetime, timedelta, timezone
@@ -54,7 +55,23 @@ if not ADMIN_EMAIL:
 # 2. DB UTILS ASYNC
 # ==========================================
 async def get_db_connection():
-    return await asyncpg.connect(DATABASE_URL)
+    logger.info("🔌 Tentative de connexion PostgreSQL...")
+
+    ssl_context = ssl.create_default_context()
+
+    try:
+        conn = await asyncpg.connect(
+            DATABASE_URL,
+            ssl=ssl_context,
+            timeout=10
+        )
+
+        logger.info("✅ Connexion PostgreSQL réussie.")
+        return conn
+
+    except Exception:
+        logger.exception("❌ Impossible de se connecter à PostgreSQL.")
+        raise
 
 async def init_db():
     conn = await get_db_connection()
@@ -86,14 +103,15 @@ async def init_db():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        logger.info("🗄️ Tentative d'init DB...")
+        logger.info("🗄️ Initialisation de la base...")
         await init_db()
-        logger.info("✅ DB OK")
-    except asyncpg.CannotConnectNowError as e:
-        logger.error(f"⚠️ DB injoignable au démarrage: {e}. L'API démarre quand même.")
+        logger.info("✅ Base initialisée.")
+    except Exception:
+        logger.exception("❌ Échec de l'initialisation de la base.")
 
     yield
-    logger.info("Shutting down")
+
+    logger.info("🛑 Arrêt du serveur.")
 
 app = FastAPI(title="CyberBrain API Secure Pro", debug=False, lifespan=lifespan)
 
